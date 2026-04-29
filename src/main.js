@@ -19,6 +19,33 @@ var _lastSyncTs=0;
 // Exponer V globalmente para inline handlers
 window.V=V;
 
+/* ═══ CFG — PARÁMETROS DINÁMICOS (editables por Jefe) ═══ */
+var CFG_DEFAULT={
+  gran_ok:90,
+  prim_lo:74,   prim_hi:75,
+  sec_lo:75,    sec_hi:78,
+  alim_ok_lo:48,alim_ok_hi:52,alim_warn_lo:47,alim_warn_hi:53,
+  sol_bad:10,   sol_warn:14,  sol_ok:21,
+  pas_bad:74,   pas_warn:79,  pas_ok:85,
+  cn_bad_lo:0.60,cn_warn_lo:1.0,cn_ok_hi:1.50,cn_warn_hi:1.70,
+  ph_ok_lo:10.5,ph_ok_hi:11.5,ph_warn_lo:10,ph_warn_hi:12,
+  esp1_lo:47,   esp1_hi:53,
+  esp89_lo:52,  esp89_hi:58,
+  ag6_ok_lo:47, ag6_ok_hi:48, ag6_warn_hi:49,
+  ag0m200_bad:78,ag0m200_warn:79,ag0m200_ok:85,
+  ag0cn_bad:1.5,ag0cn_warn:2.5,ag0cn_ok:5.5,
+  ag0o2_bad:5,  ag0o2_ok:12,
+  ag0ph_lo:10.5,ag0ph_hi:12,
+  turb_in_w1:10,turb_in_ok:40,turb_in_w2:50,
+  turb_out_ok:3,turb_out_warn:4,
+  barren_ok:0.1,
+  esplab_ok:0.2
+};
+var CFG=JSON.parse(JSON.stringify(CFG_DEFAULT));
+function cargarCFG(){try{var s=localStorage.getItem('hemco_cfg');if(s){var c=JSON.parse(s);Object.assign(CFG,c);}}catch(e){}}
+function guardarCFG(){try{localStorage.setItem('hemco_cfg',JSON.stringify(CFG));}catch(e){}}
+cargarCFG();
+
 /* ═══ FÓRMULAS ═══ */
 function cmToM3h(cm){if(!cm||isNaN(+cm)||+cm<=0)return null;return(3600*0.832*Math.pow(+cm/100,2.5)).toFixed(2);}
 function pbToTph(v){if(!v||isNaN(+v)||+v<=0)return null;return(+v*6.223543276).toFixed(1);}
@@ -41,38 +68,27 @@ function calcCCvals(){
   return{sol:cs,mal:cm2};
 }
 
-/* ═══ BUG FIX #1: Onzas — calcular acumulado Y total por separado ═══ */
+/* ═══ ONZAS — BUG FIX #3: porCorte = producción individual; acum = progresivo ═══ */
 function calcOzasAcum(){
-  var acum=0, res={};
+  var running=0, res={porCorte:{},acum:{}};
   H4.forEach(function(hh){
     var pC=parseFloat(V['s3_pregC_h'+hh]);
     var bC=parseFloat(V['s3_barC_h'+hh]);
     var qMin=cmToM3h(V['s3_ton_min_h'+hh]);
     var qMax=cmToM3h(V['s3_ton_max_h'+hh]);
     if(!isNaN(pC)&&!isNaN(bC)&&qMin&&qMax&&pC>=bC){
-      var qAvg=(+qMin+ +qMax)/2;
-      acum+=(pC-bC)*qAvg/31.1035;
-      res['h'+hh]=+acum.toFixed(1);
+      var oz=(pC-bC)*(+qMin+ +qMax)/2/31.1035;
+      running+=oz;
+      res.porCorte['h'+hh]=+oz.toFixed(1);      // producción de ESE bihora
+      res.acum['h'+hh]=+running.toFixed(1);      // suma progresiva
     }
   });
   return res;
 }
 
-// FIX: Función explícita para el total — suma todos los deltas sin redondeo intermedio
 function calcTotalOz(){
-  var total=0, tieneData=false;
-  H4.forEach(function(hh){
-    var pC=parseFloat(V['s3_pregC_h'+hh]);
-    var bC=parseFloat(V['s3_barC_h'+hh]);
-    var qMin=cmToM3h(V['s3_ton_min_h'+hh]);
-    var qMax=cmToM3h(V['s3_ton_max_h'+hh]);
-    if(!isNaN(pC)&&!isNaN(bC)&&qMin&&qMax&&pC>=bC){
-      var qAvg=(+qMin+ +qMax)/2;
-      total+=(pC-bC)*qAvg/31.1035;
-      tieneData=true;
-    }
-  });
-  return tieneData?+total.toFixed(1):null;
+  var d=calcOzasAcum(), keys=Object.keys(d.acum);
+  return keys.length>0?d.acum[keys[keys.length-1]]:null;
 }
 
 function calcRecupCortes(){
@@ -98,27 +114,27 @@ function getLastH4(rid){
   return null;
 }
 
-/* ═══ STATUS ═══ */
-function sGran(v){if(!v||isNaN(+v))return'';return +v>=90?'ok':'bad';}
-function sPrim(v){if(!v||isNaN(+v))return'';var n=+v;return n>=74&&n<=75?'ok':(n>=73&&n<=76?'warn':'bad');}
-function sSec(v){if(!v||isNaN(+v))return'';var n=+v;return n>=75&&n<=78?'ok':(n>=74&&n<=79?'warn':'bad');}
-function sAlim(v){if(!v||isNaN(+v))return'';var n=+v;if(n>=48&&n<=52)return'ok';if(n<47||n>53)return'bad';return'warn';}
-function sSol(v){if(!v||isNaN(+v))return'';var n=+v;if(n<10)return'bad';if(n<=14)return'warn';if(n<=21)return'ok';return'warn';}
-function sPas(v){if(!v||isNaN(+v))return'';var n=+v;if(n<74)return'bad';if(n<=79)return'warn';if(n<=85)return'ok';return'warn';}
-function sCN(v){if(!v||isNaN(+v))return'';var n=+v;if(n<0.60)return'bad';if(n<1.0)return'warn';if(n<=1.50)return'ok';if(n<=1.70)return'warn';return'bad';}
-function sPH(v){if(!v||isNaN(+v))return'';var n=+v;return n>=10.5&&n<=11.5?'ok':(n>=10&&n<=12?'warn':'bad');}
+/* ═══ STATUS — leen de CFG (editables) ═══ */
+function sGran(v){if(!v||isNaN(+v))return'';return +v>=CFG.gran_ok?'ok':'bad';}
+function sPrim(v){if(!v||isNaN(+v))return'';var n=+v;return n>=CFG.prim_lo&&n<=CFG.prim_hi?'ok':(n>=CFG.prim_lo-1&&n<=CFG.prim_hi+1?'warn':'bad');}
+function sSec(v){if(!v||isNaN(+v))return'';var n=+v;return n>=CFG.sec_lo&&n<=CFG.sec_hi?'ok':(n>=CFG.sec_lo-1&&n<=CFG.sec_hi+1?'warn':'bad');}
+function sAlim(v){if(!v||isNaN(+v))return'';var n=+v;if(n>=CFG.alim_ok_lo&&n<=CFG.alim_ok_hi)return'ok';if(n<CFG.alim_warn_lo||n>CFG.alim_warn_hi)return'bad';return'warn';}
+function sSol(v){if(!v||isNaN(+v))return'';var n=+v;if(n<CFG.sol_bad)return'bad';if(n<=CFG.sol_warn)return'warn';if(n<=CFG.sol_ok)return'ok';return'warn';}
+function sPas(v){if(!v||isNaN(+v))return'';var n=+v;if(n<CFG.pas_bad)return'bad';if(n<=CFG.pas_warn)return'warn';if(n<=CFG.pas_ok)return'ok';return'warn';}
+function sCN(v){if(!v||isNaN(+v))return'';var n=+v;if(n<CFG.cn_bad_lo)return'bad';if(n<CFG.cn_warn_lo)return'warn';if(n<=CFG.cn_ok_hi)return'ok';if(n<=CFG.cn_warn_hi)return'warn';return'bad';}
+function sPH(v){if(!v||isNaN(+v))return'';var n=+v;return n>=CFG.ph_ok_lo&&n<=CFG.ph_ok_hi?'ok':(n>=CFG.ph_warn_lo&&n<=CFG.ph_warn_hi?'warn':'bad');}
 function sFree(v){if(!v||isNaN(+v))return'';return'ok';}
-function sEsp1(v){if(!v||isNaN(+v))return'';var n=+v;if(n<47)return'bad';if(n<=53)return'ok';return'bad';}
-function sEsp89(v){if(!v||isNaN(+v))return'';var n=+v;if(n<52)return'bad';if(n<=58)return'ok';return'bad';}
-function sAg6(v){if(!v||isNaN(+v))return'';var n=+v;if(n<47)return'bad';if(n<=48)return'ok';if(n<=49)return'warn';return'bad';}
-function sAg0M200(v){if(!v||isNaN(+v))return'';var n=+v;if(n<78)return'bad';if(n<79)return'warn';if(n<=85)return'ok';return'warn';}
-function sAg0CN(v){if(!v||isNaN(+v))return'';var n=+v;if(n<1.5)return'bad';if(n<2.5)return'warn';if(n<=5.5)return'ok';return'warn';}
-function sAg0O2(v){if(!v||isNaN(+v))return'';var n=+v;if(n<5)return'bad';if(n<=12)return'ok';return'warn';}
-function sAg0pH(v){if(!v||isNaN(+v))return'';var n=+v;if(n<10.5)return'bad';if(n<=12)return'ok';return'warn';}
-function sTurbIn(v){if(!v||isNaN(+v))return'';var n=+v;if(n<=10)return'warn';if(n<=40)return'ok';if(n<=50)return'warn';return'bad';}
-function sTurbOut(v){if(!v||isNaN(+v))return'';var n=+v;if(n<3)return'ok';if(n<=4)return'warn';return'bad';}
-function sBarren(v){if(!v||isNaN(+v))return'';return+v<0.1?'ok':'bad';}
-function sEspLab(v){if(!v||isNaN(+v))return'';return+v<0.2?'ok':'bad';}
+function sEsp1(v){if(!v||isNaN(+v))return'';var n=+v;if(n<CFG.esp1_lo)return'bad';if(n<=CFG.esp1_hi)return'ok';return'bad';}
+function sEsp89(v){if(!v||isNaN(+v))return'';var n=+v;if(n<CFG.esp89_lo)return'bad';if(n<=CFG.esp89_hi)return'ok';return'bad';}
+function sAg6(v){if(!v||isNaN(+v))return'';var n=+v;if(n<CFG.ag6_ok_lo)return'bad';if(n<=CFG.ag6_ok_hi)return'ok';if(n<=CFG.ag6_warn_hi)return'warn';return'bad';}
+function sAg0M200(v){if(!v||isNaN(+v))return'';var n=+v;if(n<CFG.ag0m200_bad)return'bad';if(n<CFG.ag0m200_warn)return'warn';if(n<=CFG.ag0m200_ok)return'ok';return'warn';}
+function sAg0CN(v){if(!v||isNaN(+v))return'';var n=+v;if(n<CFG.ag0cn_bad)return'bad';if(n<CFG.ag0cn_warn)return'warn';if(n<=CFG.ag0cn_ok)return'ok';return'warn';}
+function sAg0O2(v){if(!v||isNaN(+v))return'';var n=+v;if(n<CFG.ag0o2_bad)return'bad';if(n<=CFG.ag0o2_ok)return'ok';return'warn';}
+function sAg0pH(v){if(!v||isNaN(+v))return'';var n=+v;if(n<CFG.ag0ph_lo)return'bad';if(n<=CFG.ag0ph_hi)return'ok';return'warn';}
+function sTurbIn(v){if(!v||isNaN(+v))return'';var n=+v;if(n<=CFG.turb_in_w1)return'warn';if(n<=CFG.turb_in_ok)return'ok';if(n<=CFG.turb_in_w2)return'warn';return'bad';}
+function sTurbOut(v){if(!v||isNaN(+v))return'';var n=+v;if(n<CFG.turb_out_ok)return'ok';if(n<=CFG.turb_out_warn)return'warn';return'bad';}
+function sBarren(v){if(!v||isNaN(+v))return'';return +v<CFG.barren_ok?'ok':'bad';}
+function sEspLab(v){if(!v||isNaN(+v))return'';return +v<CFG.esplab_ok?'ok':'bad';}
 
 var FNS={sGran:sGran,sPrim:sPrim,sSec:sSec,sAlim:sAlim,sSol:sSol,sPas:sPas,sCN:sCN,sPH:sPH,sFree:sFree,sEsp1:sEsp1,sEsp89:sEsp89,sAg6:sAg6,sAg0M200:sAg0M200,sAg0CN:sAg0CN,sAg0O2:sAg0O2,sAg0pH:sAg0pH,sTurbIn:sTurbIn,sTurbOut:sTurbOut,sBarren:sBarren,sEspLab:sEspLab};
 
@@ -625,20 +641,23 @@ function mkBar(cid,labels,datasets,yMin,yMax){
 function mkDual(cid,labels,ds1,ds2,label1,label2,col1,col2){
   var el=document.getElementById(cid);if(!el)return;
   if(charts[cid]){charts[cid].destroy();}
+  // BUG FIX #4: suggestedMax dinámico +20% para cada eje
+  function maxOf(arr){var vals=arr.filter(function(v){return v!==null&&!isNaN(v);});return vals.length>0?Math.max.apply(null,vals):null;}
+  var m1=maxOf(ds1),m2=maxOf(ds2);
   charts[cid]=new Chart(el,{type:'bar',
     data:{labels:labels,datasets:[
       {label:label1,data:ds1,backgroundColor:col1+'99',borderColor:col1,borderWidth:1,yAxisID:'y'},
       {label:label2,data:ds2,backgroundColor:col2+'99',borderColor:col2,borderWidth:1,yAxisID:'y1'}
     ]},
     options:{responsive:true,maintainAspectRatio:false,
-      layout:{padding:{top:28}},
+      layout:{padding:{top:40}},
       plugins:{legend:{labels:{font:{size:10},boxWidth:10,padding:6}},
         datalabels:{display:true,anchor:'end',align:'top',offset:2,font:{size:9,weight:'700'},
           formatter:function(v){return v===null?'':v;}}},
       scales:{
         x:{grid:{color:'rgba(0,0,0,0.05)'},ticks:{font:{size:10}}},
-        y:{type:'linear',display:true,position:'left',title:{display:true,text:label1,font:{size:9}},grid:{color:'rgba(0,0,0,0.05)'},ticks:{font:{size:9}}},
-        y1:{type:'linear',display:true,position:'right',title:{display:true,text:label2,font:{size:9}},grid:{drawOnChartArea:false},ticks:{font:{size:9}}}
+        y:{type:'linear',display:true,position:'left',title:{display:true,text:label1,font:{size:9}},suggestedMax:m1?m1*1.2:undefined,grid:{color:'rgba(0,0,0,0.05)'},ticks:{font:{size:9}}},
+        y1:{type:'linear',display:true,position:'right',title:{display:true,text:label2,font:{size:9}},suggestedMax:m2?m2*1.2:undefined,grid:{drawOnChartArea:false},ticks:{font:{size:9}}}
       }},
     plugins:[ChartDataLabels]});
 }
@@ -663,7 +682,91 @@ function renderTiles(){
   h+='<div class="tile dt" onclick="goToResumen()"><div class="tile-num">Sección 4</div><div>'+TICONS[3]+'</div><div class="tile-name">Dashboard · Resumen</div><div class="tile-st">Compartir reporte</div></div>';
   h+='<div class="tile" style="border-color:var(--mm);background:#F0FFF4" onclick="mostrarHistorial()"><div class="tile-num">Historial</div><div style="font-size:28px;opacity:.6">📋</div><div class="tile-name">Turnos Anteriores</div><div class="tile-st">Ver y cambiar de turno</div></div>';
   h+='<div class="tile" style="border-color:var(--rd);background:#FFF5F5" onclick="iniciarNuevoTurno()"><div class="tile-num">Nuevo</div><div style="font-size:28px;opacity:.6">🔄</div><div class="tile-name">Iniciar Nuevo Turno</div><div class="tile-st">Cambia turno sin perder datos</div></div>';
+  h+='<div class="tile" style="grid-column:span 2;border-color:#7C3AED;background:#F5F3FF" onclick="abrirConfigModal()"><div style="display:flex;align-items:center;gap:10px"><div style="font-size:22px">⚙</div><div><div style="font-size:13px;font-weight:700;color:#5B21B6">Parámetros del Semáforo</div><div style="font-size:11px;color:#7C3AED">Editar rangos verde/amarillo/rojo</div></div></div></div>';
   document.getElementById('tgrid').innerHTML=h;
+}
+
+/* ═══ MODAL CONFIGURACIÓN PARÁMETROS ═══ */
+function abrirConfigModal(){
+  var campos=[
+    {k:'gran_ok',      lbl:'Granulometría — mínimo OK (%)',      step:'1'},
+    {k:'prim_lo',      lbl:'Sólidos Primarios — mínimo verde (%)',step:'0.1'},
+    {k:'prim_hi',      lbl:'Sólidos Primarios — máximo verde (%)',step:'0.1'},
+    {k:'sec_lo',       lbl:'Sólidos Secundarios — mínimo verde (%)',step:'0.1'},
+    {k:'sec_hi',       lbl:'Sólidos Secundarios — máximo verde (%)',step:'0.1'},
+    {k:'alim_ok_lo',   lbl:'Alimento Ciclones — mínimo verde (%)',step:'0.1'},
+    {k:'alim_ok_hi',   lbl:'Alimento Ciclones — máximo verde (%)',step:'0.1'},
+    {k:'sol_bad',      lbl:'CG % Sólidos — límite rojo inferior',  step:'0.1'},
+    {k:'sol_warn',     lbl:'CG % Sólidos — límite amarillo superior',step:'0.1'},
+    {k:'sol_ok',       lbl:'CG % Sólidos — límite verde superior', step:'0.1'},
+    {k:'cn_bad_lo',    lbl:'CN Libre CG — límite rojo inferior',   step:'0.01'},
+    {k:'cn_warn_lo',   lbl:'CN Libre CG — inicio verde',           step:'0.01'},
+    {k:'cn_ok_hi',     lbl:'CN Libre CG — fin verde',              step:'0.01'},
+    {k:'cn_warn_hi',   lbl:'CN Libre CG — límite rojo superior',   step:'0.01'},
+    {k:'ag0cn_bad',    lbl:'CN Libre Ag0 — límite rojo inferior',  step:'0.01'},
+    {k:'ag0cn_warn',   lbl:'CN Libre Ag0 — inicio verde',          step:'0.01'},
+    {k:'ag0cn_ok',     lbl:'CN Libre Ag0 — fin verde',             step:'0.01'},
+    {k:'barren_ok',    lbl:'Barren Compósito — límite OK (<)',      step:'0.001'},
+    {k:'esplab_ok',    lbl:'Barren Espesadores — límite OK (<)',    step:'0.001'},
+    {k:'ph_ok_lo',     lbl:'pH — mínimo verde',                    step:'0.1'},
+    {k:'ph_ok_hi',     lbl:'pH — máximo verde',                    step:'0.1'},
+  ];
+  var filas=campos.map(function(f){
+    return '<div style="display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid var(--su2)">'+
+      '<div style="font-size:12px;color:var(--tx2);flex:1;padding-right:10px">'+f.lbl+'</div>'+
+      '<input type="number" step="'+f.step+'" value="'+CFG[f.k]+'" data-key="'+f.k+'" '+
+      'style="width:80px;padding:6px 8px;border:1.5px solid var(--bdr);border-radius:6px;text-align:right;font-size:14px;font-weight:700;font-family:var(--f);color:var(--tx);background:var(--bg)">'+
+      '</div>';
+  }).join('');
+
+  var m=document.getElementById('cfg-modal');
+  if(!m){
+    m=document.createElement('div');
+    m.id='cfg-modal';
+    m.style.cssText='position:fixed;inset:0;z-index:9999;background:rgba(0,0,0,0.55);display:flex;align-items:flex-end';
+    document.body.appendChild(m);
+  }
+  m.innerHTML='<div style="background:var(--sur);border-radius:16px 16px 0 0;width:100%;max-height:85vh;display:flex;flex-direction:column">'+
+    '<div style="padding:14px 16px;background:var(--md);border-radius:16px 16px 0 0;display:flex;align-items:center;gap:10px">'+
+    '<div style="font-size:14px;font-weight:700;color:#fff;flex:1">⚙ Parámetros del Semáforo</div>'+
+    '<button onclick="resetCFG()" style="background:rgba(255,255,255,0.15);border:none;color:var(--mlt);padding:6px 12px;border-radius:8px;font-size:11px;cursor:pointer;font-family:var(--f)">↺ Restaurar</button>'+
+    '<button onclick="cerrarConfigModal()" style="background:rgba(255,255,255,0.15);border:none;color:#fff;padding:6px 12px;border-radius:8px;font-size:12px;cursor:pointer;font-family:var(--f)">✕</button></div>'+
+    '<div style="overflow-y:auto;padding:0 16px 16px;flex:1">'+
+    '<div style="font-size:11px;color:var(--mu);padding:10px 0 6px">Edita los rangos y pulsa Guardar. Los cambios se aplican de inmediato al semáforo.</div>'+
+    filas+'</div>'+
+    '<div style="padding:12px 16px;border-top:1px solid var(--bdr);display:flex;gap:10px">'+
+    '<button onclick="cerrarConfigModal()" style="flex:1;padding:13px;border-radius:10px;background:var(--su2);color:var(--mu);border:1px solid var(--bdr);font-size:14px;font-weight:700;font-family:var(--f);cursor:pointer">Cancelar</button>'+
+    '<button onclick="guardarConfigModal()" style="flex:2;padding:13px;border-radius:10px;background:#5B21B6;color:#fff;border:none;font-size:14px;font-weight:700;font-family:var(--f);cursor:pointer">✓ Guardar cambios</button>'+
+    '</div></div>';
+  m.style.display='flex';
+}
+
+function guardarConfigModal(){
+  var m=document.getElementById('cfg-modal');
+  if(!m)return;
+  m.querySelectorAll('input[data-key]').forEach(function(inp){
+    var k=inp.dataset.key, v=parseFloat(inp.value);
+    if(!isNaN(v))CFG[k]=v;
+  });
+  guardarCFG();
+  cerrarConfigModal();
+  // Feedback visual
+  var toast=document.getElementById('col-toast'),msg=document.getElementById('col-toast-msg');
+  if(msg)msg.innerHTML='✓ Parámetros del semáforo actualizados';
+  if(toast)toast.className='col-toast show';
+  setTimeout(function(){if(toast)toast.className='col-toast';},2000);
+}
+
+function cerrarConfigModal(){
+  var m=document.getElementById('cfg-modal');
+  if(m)m.style.display='none';
+}
+
+function resetCFG(){
+  if(!confirm('¿Restaurar todos los rangos a los valores por defecto?'))return;
+  CFG=JSON.parse(JSON.stringify(CFG_DEFAULT));
+  guardarCFG();
+  cerrarConfigModal();
 }
 function goToDash(){cancelJump();showScreen('scr-dash');var ini=userName.split(' ').map(function(w){return w[0];}).join('').substring(0,2).toUpperCase();document.getElementById('d-av').textContent=ini;document.getElementById('d-un').textContent=userName;document.getElementById('d-ui').textContent=userRole+' · Turno '+userShift;document.getElementById('tbg-dash').textContent='Turno '+userShift;renderTiles();}
 function goToSec(si){curSec=si;curSub=0;document.getElementById('sec-hn').textContent=SECS[si].title;document.getElementById('tbg-sec').textContent=userShift;showScreen('scr-sec');renderNav();renderSub();}
@@ -685,11 +788,10 @@ function nextSub(){
 }
 function tick(){var t=new Date().toLocaleTimeString('es-NI',{hour:'2-digit',minute:'2-digit'});['login','dash','sec','db'].forEach(function(x){var el=document.getElementById('clk-'+x);if(el)el.textContent=t;});var dht=document.getElementById('db-hdr-time');if(dht)dht.textContent=t;}
 
-/* ═══ HERO — BUG FIX #1: usa calcTotalOz() en vez de lastKey ═══ */
 function buildHero(){
-  var ozAcum=calcOzasAcum();
+  var ozData=calcOzasAcum();
   var recData=calcRecupCortes();
-  var totalOz=calcTotalOz(); // FIX: total explícito, sin redondeo intermedio
+  var totalOz=calcTotalOz();
   var ccVals=calcCCvals();
 
   var ag0M200=getLastH4('ag0_m200');
@@ -708,7 +810,7 @@ function buildHero(){
   h+='<div class="hkpi"><div class="hkpi-icon">▣</div><div class="hkpi-lbl">% Sólidos · Agitador 0</div><div class="hkpi-val '+kpiS(ag0Sol,sAg6)+'">'+kpiV(ag0Sol)+'</div><div class="hkpi-unit">%</div></div>';
   h+='<div class="hkpi"><div class="hkpi-icon">◈</div><div class="hkpi-lbl">CN Libre · Agitador 0</div><div class="hkpi-val '+kpiS(ag0CN,sAg0CN)+'">'+kpiV(ag0CN)+'</div><div class="hkpi-unit">lb/tm</div></div>';
   h+='<div class="hkpi"><div class="hkpi-icon">↑</div><div class="hkpi-lbl">Pregnant Compósito</div><div class="hkpi-val '+(pregC!==null?'ok':'mt')+'">'+kpiV(pregC)+'</div><div class="hkpi-unit">g/tm</div></div>';
-  h+='<div class="hkpi"><div class="hkpi-icon">↓</div><div class="hkpi-lbl">Barren Compósito (&lt;0.10)</div><div class="hkpi-val '+kpiS(barrC,sBarren)+'">'+kpiV(barrC)+'</div><div class="hkpi-unit">g/tm</div></div>';
+  h+='<div class="hkpi"><div class="hkpi-icon">↓</div><div class="hkpi-lbl">Barren Compósito (&lt;'+CFG.barren_ok+')</div><div class="hkpi-val '+kpiS(barrC,sBarren)+'">'+kpiV(barrC)+'</div><div class="hkpi-unit">g/tm</div></div>';
   h+='<div class="hkpi" style="grid-column:span 2;background:rgba(35,207,125,0.12);border-color:rgba(35,207,125,0.3)">'+
     '<div class="hkpi-lbl">⟳ Carga Circulante</div>'+
     '<div style="display:flex;gap:24px;margin-top:4px">'+
@@ -718,24 +820,17 @@ function buildHero(){
     '<div class="hkpi-val '+(ccVals.mal!==null?sCCval(ccVals.mal):'mt')+'" style="font-size:26px">'+(ccVals.mal!==null?ccVals.mal:'—')+'</div><div class="hkpi-unit">%</div></div>'+
     '<div style="margin-left:auto;font-size:10px;color:rgba(255,255,255,0.4);align-self:flex-end">Rango típico:<br>300–500%</div></div></div>';
 
-  // ONZAS — FIX: usar totalOz en vez de lastKey del objeto
-  var prevAcum=0;
-  var ozPorCorte={};
-  H4.forEach(function(hh){
-    var ac=ozAcum['h'+hh];
-    if(ac!==undefined){ozPorCorte['h'+hh]=+(ac-prevAcum).toFixed(1);prevAcum=ac;}
-  });
-
+  // ONZAS — FIX #3: usar porCorte (individual) y acum (progresivo) correctamente
   h+='<div class="oz-card"><div style="display:flex;justify-content:space-between;align-items:flex-start;flex-wrap:wrap;gap:8px">'+
     '<div><div class="hkpi-lbl">★ Onzas Precipitadas · Acumulado del Turno</div>'+
     '<div class="oz-big">'+(totalOz!==null?totalOz:'—')+'<span style="font-size:14px;color:rgba(255,255,255,0.5);margin-left:4px">oz totales</span></div></div></div>'+
     '<div style="margin-top:10px;display:grid;grid-template-columns:1fr 1fr;gap:8px">'+
-    '<div><div style="font-size:10px;color:rgba(255,255,255,0.55);margin-bottom:6px;font-weight:700;text-transform:uppercase;letter-spacing:.3px">Onzas por Corte (ese bihora)</div>'+
+    '<div><div style="font-size:10px;color:rgba(255,255,255,0.55);margin-bottom:6px;font-weight:700;text-transform:uppercase;letter-spacing:.3px">Producción por Corte (ese bihora)</div>'+
     '<div style="display:flex;gap:8px;flex-wrap:wrap">';
-  H4.forEach(function(hh){var v=ozPorCorte['h'+hh];h+='<div class="oz-cut"><div class="oz-cut-h">H'+hh+'</div><div class="oz-cut-v" style="color:#FCD34D">'+(v!==undefined?v+' oz':'—')+'</div></div>';});
+  H4.forEach(function(hh){var v=ozData.porCorte['h'+hh];h+='<div class="oz-cut"><div class="oz-cut-h">H'+hh+'</div><div class="oz-cut-v" style="color:#FCD34D">'+(v!==undefined?v+' oz':'—')+'</div></div>';});
   h+='</div></div><div><div style="font-size:10px;color:rgba(255,255,255,0.55);margin-bottom:6px;font-weight:700;text-transform:uppercase;letter-spacing:.3px">Acumulado Progresivo</div>'+
     '<div style="display:flex;gap:8px;flex-wrap:wrap">';
-  H4.forEach(function(hh){var v=ozAcum['h'+hh];h+='<div class="oz-cut"><div class="oz-cut-h">H'+hh+'</div><div class="oz-cut-v">'+(v!==undefined?v+' oz':'—')+'</div></div>';});
+  H4.forEach(function(hh){var v=ozData.acum['h'+hh];h+='<div class="oz-cut"><div class="oz-cut-h">H'+hh+'</div><div class="oz-cut-v">'+(v!==undefined?v+' oz':'—')+'</div></div>';});
   h+='</div></div></div></div>';
 
   h+='<div class="hero-rec"><div class="hero-rec-title">% Recuperación Merrill-Crowe · Promedio del Turno</div>'+
@@ -782,6 +877,7 @@ function renderDashboard(){
   html+='<div><div class="db-ct">Caja General · % Sólidos y Pasante M200</div><div class="db-cw"><canvas id="ch-cgsp"></canvas></div></div>';
   html+='<div><div class="db-ct">Caja General · CN Libre (lb/tm)</div><div class="db-cw"><canvas id="ch-cgcn"></canvas></div></div>';
   html+='<div><div class="db-ct">pH por Equipo · H1–H8</div><div class="db-cw"><canvas id="ch-ph"></canvas></div></div>';
+  html+='<div><div class="db-ct">% Sólidos Alimento Ciclones · H2,H4,H6,H8</div><div class="db-cw sm"><canvas id="ch-alim"></canvas></div></div>';
   html+='<div><div class="db-ct">Sólidos Molinos · Heatmap</div><div style="overflow-x:auto"><table class="hmap"><thead><tr><th class="rl">Molino</th>'+H8.map(function(h){return'<th>H'+h+'</th>';}).join('')+'</tr></thead><tbody>'+
     heatRow('mol_md1','MD1',H8,sPrim)+heatRow('mol_md2','MD2',H8,sPrim)+heatRow('mol_sep','Sepro',H8,sSec)+
     heatRow('mol_m1','M1',H8,sSec)+heatRow('mol_m2','M2',H8,sSec)+heatRow('mol_m4','M4',H8,sSec)+heatRow('mol_m5','M5',H8,sSec)+
@@ -798,9 +894,13 @@ function renderDashboard(){
   html+='<div class="ag0-panel"><div class="db-ct" style="color:var(--md)">Agitador 0 · Todos los Parámetros</div><div class="ag0-grid">';
   ag0Params.forEach(function(p){html+='<div class="ag0-card"><div class="ag0-title">'+p.l+(p.u?' ('+p.u+')':'')+'</div>';H4.forEach(function(hh){var v=V[p.k+'_h'+hh]||'',s=p.fn(v);html+='<div class="mini-row"><span class="mini-lbl">H'+hh+'</span><span class="mini-val '+(v?s:'mt')+'">'+(v||'—')+'</span></div>';});html+='</div>';});
   html+='</div><div style="margin-top:10px"><div class="db-ct">CN Libre bihora (lb/tm)</div><div class="db-cw sm"><canvas id="ch-ag0cn"></canvas></div></div></div>';
-  html+='<div><div class="db-ct">O2 Agitadores 1 y 2 (ppm)</div><div class="db-cw sm"><canvas id="ch-ag12"></canvas></div></div></div></div>';
+  html+='<div><div class="db-ct">O2 Agitadores 1 y 2 (ppm)</div><div class="db-cw sm"><canvas id="ch-ag12"></canvas></div></div>';
+  // Datos faltantes #2: Sedimentación y Policloruro
+  html+='<div><div class="db-ct" style="margin-bottom:6px">Sedimentación Espesadores (cm/s) · H2,H4,H6,H8</div><div style="overflow-x:auto"><table class="hmap"><thead><tr><th class="rl">Equipo</th>'+H4.map(function(h){return'<th>H'+h+'</th>';}).join('')+'</tr></thead><tbody>'+heatRow('esp1a_sed','Esp. 1A',H4,sFree)+heatRow('esp1b_sed','Esp. 1B',H4,sFree)+heatRow('esp3b_sed','Esp. 3B',H4,sFree)+'</tbody></table></div></div>';
+  html+='<div><div class="db-ct" style="margin-bottom:6px">Dosificación Reactivos · H2,H4,H6,H8</div><div style="overflow-x:auto"><table class="hmap"><thead><tr><th class="rl">Reactivo</th>'+H4.map(function(h){return'<th>H'+h+'</th>';}).join('')+'</tr></thead><tbody>'+heatRow('esp3b_pol','Policloruro (ml/min)',H4,sFree)+heatRow('s3_zinc','Polvo Zinc (g/min)',H4,sFree)+heatRow('s3_cnlib','CN Libre (lb/ft)',H4,sFree)+heatRow('s3_cndos','Dosis CN (s/L)',H4,sFree)+'</tbody></table></div></div>';
+  html+='</div></div>';
   // SEC 3
-  var ozAcum=calcOzasAcum();
+  var ozData=calcOzasAcum();
   var q1_h=H4.map(function(h){return cmToM3h(V['s3_ton_min_h'+h]);});var q2_h=H4.map(function(h){return cmToM3h(V['s3_ton_max_h'+h]);});
   html+='<div class="db-sec"><div class="db-sec-hdr"><svg width="28" height="28" viewBox="0 0 28 28"><path d="M3 25L14 5L25 25Z" fill="#76C810"/><path d="M9 25L14 12L19 25Z" fill="#00493C"/><rect x="12" y="17" width="4" height="8" rx="2" fill="#CCF895"/></svg><span class="db-sec-title">Sección 3 · Precipitación (Merrill-Crowe)</span></div><div class="db-sec-body">';
   html+='<div style="background:var(--md);border-radius:10px;padding:12px;margin-bottom:4px"><div style="font-size:11px;color:var(--mlt);margin-bottom:8px;font-weight:700">CAUDAL POR CORTE (m³/h)</div><div style="display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:8px">';
@@ -822,10 +922,11 @@ function renderDashboard(){
     mkBar('ch-cgsp',hl,[{label:'% Sólidos',data:getH('cg_sol',H8),backgroundColor:'rgba(0,73,60,0.7)',borderColor:CLR.md,borderWidth:1},{label:'M200 %',data:getH('cg_pas',H8),backgroundColor:'rgba(118,200,16,0.6)',borderColor:CLR.ml,borderWidth:1}],0,100);
     mkBar('ch-cgcn',hl,[{label:'CN Libre (lb/tm)',data:getH('cg_cn',H8),backgroundColor:'rgba(180,83,9,0.7)',borderColor:'#B45309',borderWidth:1}],0,null);
     mkBar('ch-ph',hl,[{label:'Esp. 1A',data:getH('phm_e1a',H8),backgroundColor:'rgba(0,73,60,0.7)',borderColor:CLR.md,borderWidth:1},{label:'Esp. 1B',data:getH('phm_e1b',H8),backgroundColor:'rgba(118,200,16,0.6)',borderColor:CLR.ml,borderWidth:1},{label:'Molino P.',data:getH('phm_mp',H8),backgroundColor:'rgba(35,207,125,0.6)',borderColor:CLR.mm,borderWidth:1},{label:'Clas.',data:getH('phm_ch',H8),backgroundColor:'rgba(180,83,9,0.5)',borderColor:'#B45309',borderWidth:1}],9,13);
+    mkBar('ch-alim',h4l,[{label:'% Sól. Alimento Ciclones',data:getH('alim_sol',H4),backgroundColor:'rgba(91,33,182,0.7)',borderColor:'#5B21B6',borderWidth:1}],0,100);
     mkBar('ch-esp',hl,[{label:'Esp 1A',data:getH('esp1a_sol',H8),backgroundColor:'rgba(0,73,60,0.7)',borderColor:CLR.md,borderWidth:1},{label:'Esp 1B',data:getH('esp1b_sol',H8),backgroundColor:'rgba(118,200,16,0.6)',borderColor:CLR.ml,borderWidth:1},{label:'Esp 3B',data:getH('esp3b_sol',H8),backgroundColor:'rgba(35,207,125,0.6)',borderColor:CLR.mm,borderWidth:1},{label:'Esp 8',data:getH('esp8_sol',H8),backgroundColor:'rgba(180,83,9,0.6)',borderColor:'#B45309',borderWidth:1},{label:'Esp 9',data:getH('esp9_sol',H8),backgroundColor:'rgba(124,58,237,0.6)',borderColor:'#7C3AED',borderWidth:1}],40,65);
     mkBar('ch-ag0cn',h4l,[{label:'CN Libre Ag0 (lb/tm)',data:getH('ag0_cn',H4),backgroundColor:'rgba(180,83,9,0.7)',borderColor:'#B45309',borderWidth:1}],0,7);
     mkBar('ch-ag12',h4l,[{label:'Ag1 O2',data:getH('ag1_o2',H4),backgroundColor:'rgba(118,200,16,0.7)',borderColor:CLR.ml,borderWidth:1},{label:'Ag2 O2',data:getH('ag2_o2',H4),backgroundColor:'rgba(35,207,125,0.6)',borderColor:CLR.mm,borderWidth:1}],0,18);
-    var ozAcumArr=H4.map(function(h){return ozAcum['h'+h]||null;});
+    var ozAcumArr=H4.map(function(h){return ozData.acum['h'+h]||null;});
     mkBar('ch-oz',h4l,[{label:'Onzas acumuladas (oz)',data:ozAcumArr,backgroundColor:'rgba(118,200,16,0.7)',borderColor:CLR.ml,borderWidth:1}],0,null);
     mkDual('ch-pregbarr',h4l,getH('s3_pregC',H4),getH('s3_barC',H4),'Pregnant (g/tm)','Barren (g/tm)',CLR.md,CLR.rd);
     mkDual('ch-turb',h4l,getH('s3_turb_in',H4),getH('s3_turb_out',H4),'Entrada NTU','Salida NTU',CLR.md,CLR.ml);
@@ -914,6 +1015,10 @@ window.mostrarHistorial=mostrarHistorial;
 window.iniciarNuevoTurno=iniciarNuevoTurno;
 window.abrirTurno=abrirTurno;
 window.mostrarCargaNube=mostrarCargaNube;
+window.abrirConfigModal=abrirConfigModal;
+window.guardarConfigModal=guardarConfigModal;
+window.cerrarConfigModal=cerrarConfigModal;
+window.resetCFG=resetCFG;
 // exportHTML se expone desde dashboard.js
 
 /* ═══ INIT ═══ */
