@@ -1,0 +1,78 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1.0,user-scalable=no">
+<title>HEMCO · Reporte de Turno</title>
+<link rel="manifest" href="/manifest.json">
+<meta name="theme-color" content="#00493C">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/chartjs-plugin-datalabels/2.2.0/chartjs-plugin-datalabels.min.js"></script>
+</head>
+<body>
+<datalist id="supervisores">
+  <option value="Domingo Téllez"><option value="Pedro Ochoa"><option value="Axel Guillen">
+  <option value="Leonel Herrera"><option value="Jasmani Parrales"><option value="Reynaldo Arguello">
+  <option value="Norlan Cardenas"><option value="Mario Ortiz">
+</datalist>
+<div class="col-toast" id="col-toast">
+  <div class="col-toast-msg" id="col-toast-msg">✓ Hora completada</div>
+  <div class="col-toast-btns">
+    <button class="cbt cbt-stay" onclick="cancelJump()">Quedarme</button>
+    <button class="cbt cbt-ok" onclick="doJump()">Sig. subsección →</button>
+  </div>
+</div>
+
+<!-- LOGIN -->
+<div class="screen show" id="scr-login">
+  <div class="hdr"><div class="lgc">M</div><div><div class="bn">Mineros Nicaragua</div><div class="bs">HEMCO · Reporte de Turno</div></div><div class="hsp"></div><div class="hck" id="clk-login">--:--</div></div>
+  <div class="login-body">
+    <div class="lw"><h2>Inicio de Turno</h2><p>Identifícate para comenzar</p></div>
+    <div class="lcard"><div class="lct">Supervisor</div><input type="text" class="lci" id="inp-nombre" list="supervisores" placeholder="Escribe el nombre..." autocomplete="off"></div>
+    <div class="lcard"><div class="lct">Turno</div><div class="sr"><button class="sb" id="sh-m" onclick="setShift('Mañana')">☀ Mañana</button><button class="sb" id="sh-t" onclick="setShift('Tarde')">🌤 Tarde</button><button class="sb" id="sh-n" onclick="setShift('Noche')">🌙 Noche</button></div></div>
+    <div class="lcard"><div class="lct">Rol</div><div class="rr"><button class="sb" id="rol-op" onclick="setRole('Operador')">Operador</button><button class="sb" id="rol-su" onclick="setRole('Supervisor')">Supervisor</button></div></div>
+    <button class="btn-start" onclick="startTurno()">Iniciar Reporte →</button>
+    <button class="btn-cloud-load" id="btn-cloud-load" onclick="mostrarCargaNube()" style="display:none">☁ Cargar turno desde la nube</button>
+  </div>
+</div>
+
+<!-- DASHBOARD TILES -->
+<div class="screen" id="scr-dash">
+  <div class="hdr"><div class="lgc">M</div><div><div class="bn">Mineros Nicaragua</div><div class="bs">HEMCO · Reporte de Turno</div></div><div class="hsp"></div><span class="tbg" id="tbg-dash">Turno</span><div class="hck" id="clk-dash">--:--</div></div>
+  <div class="dash-body"><div class="dash-user"><div class="dash-av" id="d-av">?</div><div><div class="dash-un" id="d-un">---</div><div class="dash-ui" id="d-ui">---</div></div><div class="sync-status" id="sync-status"></div></div><div class="tgrid" id="tgrid"></div></div>
+</div>
+
+<!-- SECCIÓN -->
+<div class="screen" id="scr-sec">
+  <div class="hdr">
+    <button class="hback" onclick="goToDash()">←</button>
+    <div style="flex:1;min-width:0"><div class="bn" id="sec-hn" style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis">Sección</div><div class="bs" id="sec-hs">---</div></div>
+    <div class="nav-arrows" id="nav-arrows" style="display:none"><button class="nav-arr" onclick="navUp()">▲</button><button class="nav-arr" onclick="navDown()">▼</button></div>
+    <span class="tbg" id="tbg-sec" style="margin-left:4px">T</span>
+    <div class="hck" id="clk-sec">--:--</div>
+  </div>
+  <div class="sbar"><span class="sbt" id="sbar-t">---</span><span style="color:var(--bd2)">·</span><span class="sbs" id="sbar-s">---</span></div>
+  <div class="subnav" id="subnav"></div>
+  <div class="content" id="content"></div>
+  <div class="footer">
+    <button class="btn bg" id="bprev" onclick="prevSub()">← Ant.</button>
+    <div class="prog"><div class="pf" id="pf"></div></div>
+    <div class="pl" id="pl">1/1</div>
+    <button class="btn bp" id="bnext" onclick="nextSub()">Siguiente →</button>
+  </div>
+</div>
+
+<!-- DASHBOARD RESUMEN -->
+<div class="screen" id="scr-db">
+  <div class="hdr"><button class="hback" onclick="goToDash()">←</button><div><div class="bn">Dashboard · Resumen</div><div class="bs" id="db-hdr-info">---</div></div><div class="hsp"></div><div class="hck" id="clk-db">--:--</div></div>
+  <div class="db-body" id="db-body"></div>
+  <div class="db-export-bar">
+    <button class="btn-bk" onclick="goToDash()">← Volver</button>
+    <button class="btn-exp" style="background:var(--mm);color:var(--md)" onclick="sincronizarTurno(null)">☁ Guardar en Sheets</button>
+    <button class="btn-exp" onclick="exportHTML()">📤 Compartir</button>
+  </div>
+</div>
+
+<script type="module" src="/src/main.js"></script>
+</body>
+</html>
