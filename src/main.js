@@ -91,6 +91,36 @@ function calcTotalOz(){
   return keys.length>0?d.acum[keys[keys.length-1]]:null;
 }
 
+/* ═══ FLUJÓMETRO CONO DE ZINC — cálculo paralelo de auditoría ═══ */
+function calcOzasFluj(){
+  var running=0, res={porCorte:{},acum:{},deltas:{}};
+  var prev=parseFloat(V['fluj_h0']);
+  var H4ref=[2,4,6,8];
+  H4ref.forEach(function(hh){
+    var lect=parseFloat(V['fluj_h'+hh]);
+    if(!isNaN(prev)&&!isNaN(lect)&&lect>=prev){
+      var delta=lect-prev;
+      res.deltas['h'+hh]=+delta.toFixed(2);
+      var pC=parseFloat(V['s3_pregC_h'+hh]);
+      var bC=parseFloat(V['s3_barC_h'+hh]);
+      if(!isNaN(pC)&&!isNaN(bC)&&pC>=bC){
+        var oz=(pC-bC)*delta/31.1035;
+        running+=oz;
+        res.porCorte['h'+hh]=+oz.toFixed(1);
+        res.acum['h'+hh]=+running.toFixed(1);
+      }
+      prev=lect;
+    } else if(!isNaN(lect)){
+      prev=lect;
+    }
+  });
+  return res;
+}
+function calcTotalOzFluj(){
+  var d=calcOzasFluj(), keys=Object.keys(d.acum);
+  return keys.length>0?d.acum[keys[keys.length-1]]:null;
+}
+
 function calcRecupCortes(){
   var vals=[], res={};
   H4.forEach(function(hh){
@@ -399,14 +429,52 @@ function rS3o2(){
   return '<div class="stitle">O2 Cono de Precipitación</div>'+gl('ppm','H2,H4,H6,H8')+'<div class="hwrap"><table class="hgrid"><thead><tr><th class="rl">Punto</th><th>Un.</th>'+gHead(H4)+'</tr></thead><tbody>'+
     hr('s3_o2_10','10 cm','ppm',H4,sAg0O2,'0.1',0)+hr('s3_o2_25','25 cm','ppm',H4,sAg0O2,'0.1',1)+hr('s3_o2_50','50 cm','ppm',H4,sAg0O2,'0.1',2)+hr('s3_o2_niv','Nivel %','%',H4,sFree,'any',3)+hr('s3_o2_vert','Vertedero','ppm',H4,sAg0O2,'0.1',4)+'</tbody></table></div>';
 }
+function rS3fluj(){
+  var h0=V['fluj_h0']||'';
+  var h='<div class="stitle">Flujómetro Cono de Zinc</div>'+
+    gl('Lectura Inicial (turno anterior)')+'<div class="fgrid"><div class="fcard"><div class="flbl">Lectura H0 (m³)</div><div class="frow">'+
+    '<input type="number" class="fi" id="fi-fluj_h0" value="'+h0+'" placeholder="---" inputmode="decimal" step="0.01" oninput="V[\'fluj_h0\']=this.value;updFlujDeltas();programarSyncNube()">'+
+    '<span class="fu">m³</span></div></div></div>'+
+    gl('Lecturas Bihorarias','H2,H4,H6,H8')+
+    '<div class="hwrap"><table class="hgrid"><thead><tr><th class="rl">Dato</th><th>Un.</th>'+gHead(H4)+'</tr></thead><tbody>';
+  // Fila de lecturas
+  h+='<tr><td class="rl">Lectura</td><td class="uc">m³</td>';
+  H4.forEach(function(hh){var k='fluj_h'+hh,v=V[k]||'';
+    h+='<td'+(hh===curH?' class="cur"':'')+'><input type="number" step="0.01" inputmode="decimal" class="hi" id="hgi-'+k+'" value="'+v+'" oninput="V[\''+k+'\']=this.value;updFlujDeltas();programarSyncNube()"></td>';
+  });
+  h+='</tr></tbody></table></div>';
+  // Widget de deltas calculados
+  h+='<div class="ton-widget" id="fluj-deltas"><div class="ton-w-lbl">Ingresa H0 y lecturas para ver deltas</div></div>';
+  setTimeout(updFlujDeltas,80);
+  return h;
+}
+function updFlujDeltas(){
+  var el=document.getElementById('fluj-deltas');if(!el)return;
+  var fd=calcOzasFluj();
+  var rows='';
+  var prev=parseFloat(V['fluj_h0']);
+  H4.forEach(function(hh){
+    var lect=V['fluj_h'+hh]||'';
+    var d=fd.deltas['h'+hh], oz=fd.porCorte['h'+hh], ac=fd.acum['h'+hh];
+    rows+='<div style="display:flex;align-items:center;gap:10px;margin-top:6px">'+
+      '<div style="width:28px;font-size:11px;color:var(--mlt)">H'+hh+'</div>'+
+      '<div style="flex:1"><div class="ton-w-lbl">Δ Vol: <b>'+(d!==undefined?d+' m³':'—')+'</b></div></div>'+
+      '<div style="flex:1"><div class="ton-w-lbl">Oz: <b>'+(oz!==undefined?oz:'—')+'</b></div></div>'+
+      '<div style="flex:1"><div class="ton-w-lbl">Acum: <b style="color:var(--ml)">'+(ac!==undefined?ac:'—')+'</b></div></div></div>';
+  });
+  var totalF=calcTotalOzFluj();
+  el.innerHTML='<div class="ton-w-lbl">Volumen procesado y onzas por flujómetro</div>'+rows+
+    '<div style="margin-top:10px;border-top:1px solid rgba(255,255,255,0.15);padding-top:8px">'+
+    '<div class="ton-w-lbl">Total Flujómetro:</div><div class="ton-w-val">'+(totalF!==null?totalF+' oz':'—')+'</div></div>';
+}
 
-var R={s1_gran:rGran,s1_mol:rMol,s1_cc:rCC,s1_alim:rAlim,s1_cg:rCG,s1_peso:rPeso,s1_phcn:rPhCN,s1_phm:rPhM,s2_esp1:rEsp1,s2_esp3b:rEsp3b,s2_esp89:rEsp89,s2_ag0:rAg0,s2_ag12:rAg12,s3_lab:rS3lab,s3_dos:rS3dos,s3_pre:rS3pre,s3_turb:rS3turb,s3_o2:rS3o2};
+var R={s1_gran:rGran,s1_mol:rMol,s1_cc:rCC,s1_alim:rAlim,s1_cg:rCG,s1_peso:rPeso,s1_phcn:rPhCN,s1_phm:rPhM,s2_esp1:rEsp1,s2_esp3b:rEsp3b,s2_esp89:rEsp89,s2_ag0:rAg0,s2_ag12:rAg12,s3_lab:rS3lab,s3_dos:rS3dos,s3_pre:rS3pre,s3_turb:rS3turb,s3_o2:rS3o2,s3_fluj:rS3fluj};
 
 /* ═══ SECCIONES ═══ */
 var SECS=[
   {title:'Trituración y Molienda',subs:[{id:'s1_gran',label:'1.1 Granulometrías'},{id:'s1_mol',label:'1.2 Sólidos Molinos'},{id:'s1_cc',label:'1.3 Carga Circulante'},{id:'s1_alim',label:'1.4 Alimento Ciclones'},{id:'s1_cg',label:'1.5 Caja General'},{id:'s1_peso',label:'1.6 Pesómetros'},{id:'s1_phcn',label:'1.7 pH Tanques CN'},{id:'s1_phm',label:'1.8 Medición pH'}]},
   {title:'Agitadores y Espesadores',subs:[{id:'s2_esp1',label:'2.1 Esp. 1A y 1B'},{id:'s2_esp3b',label:'2.2 Espesador 3B'},{id:'s2_esp89',label:'2.3 Esp. 8, 9 y Ag. 6'},{id:'s2_ag0',label:'2.4 Agitador 0'},{id:'s2_ag12',label:'2.5 Agitadores 1 y 2'}]},
-  {title:'Precipitación',subs:[{id:'s3_lab',label:'3.1 Lab Químico'},{id:'s3_dos',label:'3.2 Dosificación'},{id:'s3_pre',label:'3.3 Presiones'},{id:'s3_turb',label:'3.4 Turbidez'},{id:'s3_o2',label:'3.5 O2 Cono'}]}
+  {title:'Precipitación',subs:[{id:'s3_lab',label:'3.1 Lab Químico'},{id:'s3_dos',label:'3.2 Dosificación'},{id:'s3_pre',label:'3.3 Presiones'},{id:'s3_turb',label:'3.4 Turbidez'},{id:'s3_o2',label:'3.5 O2 Cono'},{id:'s3_fluj',label:'3.6 Flujómetro'}]}
 ];
 
 /* ═══ GOOGLE SHEETS SYNC ═══ */
@@ -928,6 +996,7 @@ function renderDashboard(){
   html+='</div></div>';
   // SEC 3
   var ozData=calcOzasAcum();
+  var totalOz=calcTotalOz();
   var q1_h=H4.map(function(h){return cmToM3h(V['s3_ton_min_h'+h]);});var q2_h=H4.map(function(h){return cmToM3h(V['s3_ton_max_h'+h]);});
   html+='<div class="db-sec"><div class="db-sec-hdr"><svg width="28" height="28" viewBox="0 0 28 28"><path d="M3 25L14 5L25 25Z" fill="#76C810"/><path d="M9 25L14 12L19 25Z" fill="#00493C"/><rect x="12" y="17" width="4" height="8" rx="2" fill="#CCF895"/></svg><span class="db-sec-title">Sección 3 · Precipitación (Merrill-Crowe)</span></div><div class="db-sec-body">';
   html+='<div style="background:var(--md);border-radius:10px;padding:12px;margin-bottom:4px"><div style="font-size:11px;color:var(--mlt);margin-bottom:8px;font-weight:700">CAUDAL POR CORTE (m³/h)</div><div style="display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:8px">';
@@ -939,6 +1008,20 @@ function renderDashboard(){
   html+='<div><div class="db-ct">Turbidez Filtros (NTU) — eje dual</div><div class="db-cw sm"><canvas id="ch-turb"></canvas></div></div>';
   html+='<div style="font-size:10px;color:var(--mu);margin-top:-8px;padding:0 4px;margin-bottom:8px">Eje izq: Entrada · Eje der: Salida (escalas independientes)</div>';
   html+='<div><div class="db-ct">O2 Cono Precipitación (ppm)</div><div class="db-cw sm"><canvas id="ch-o2cono"></canvas></div></div>';
+  // AUDITORÍA: Flujómetro vs Vertedero
+  var flujData=calcOzasFluj();
+  var totalFluj=calcTotalOzFluj();
+  html+='<div style="background:var(--su2);border:2px solid #7C3AED;border-radius:10px;padding:14px;margin-top:4px"><div class="db-ct" style="color:#5B21B6;margin-bottom:10px">⚖ Auditoría: Vertedero vs Flujómetro</div>';
+  html+='<div style="display:flex;gap:16px;margin-bottom:12px;flex-wrap:wrap"><div style="flex:1;min-width:120px;background:var(--sur);border:1px solid var(--bdr);border-radius:8px;padding:10px;text-align:center"><div style="font-size:10px;color:var(--mu)">Total Vertedero</div><div style="font-size:24px;font-weight:700;color:var(--md)">'+(totalOz!==null?totalOz:'—')+' <span style="font-size:12px">oz</span></div></div>';
+  html+='<div style="flex:1;min-width:120px;background:var(--sur);border:1px solid #7C3AED;border-radius:8px;padding:10px;text-align:center"><div style="font-size:10px;color:#7C3AED">Total Flujómetro</div><div style="font-size:24px;font-weight:700;color:#5B21B6">'+(totalFluj!==null?totalFluj:'—')+' <span style="font-size:12px">oz</span></div></div></div>';
+  html+='<div style="overflow-x:auto"><table class="hmap"><thead><tr><th class="rl">Corte</th>'+H4.map(function(h){return'<th>H'+h+'</th>';}).join('')+'</tr></thead><tbody>';
+  html+='<tr><td class="rl" style="padding:4px 8px;font-size:11px;background:var(--su2);font-weight:700;border-right:2px solid var(--bd2)">Δ Vol (m³)</td>';
+  H4.forEach(function(hh){var d=flujData.deltas['h'+hh];html+='<td style="font-size:11px;font-weight:700;text-align:center;border:1px solid var(--bdr)">'+(d!==undefined?d:'·')+'</td>';});
+  html+='</tr><tr><td class="rl" style="padding:4px 8px;font-size:11px;background:var(--su2);font-weight:700;border-right:2px solid var(--bd2)">Oz Vertedero</td>';
+  H4.forEach(function(hh){var v=ozData.porCorte['h'+hh];html+='<td style="font-size:11px;font-weight:700;text-align:center;border:1px solid var(--bdr);color:var(--md)">'+(v!==undefined?v:'·')+'</td>';});
+  html+='</tr><tr><td class="rl" style="padding:4px 8px;font-size:11px;background:var(--su2);font-weight:700;border-right:2px solid var(--bd2)">Oz Flujómetro</td>';
+  H4.forEach(function(hh){var v=flujData.porCorte['h'+hh];html+='<td style="font-size:11px;font-weight:700;text-align:center;border:1px solid var(--bdr);color:#5B21B6">'+(v!==undefined?v:'·')+'</td>';});
+  html+='</tr></tbody></table></div></div>';
   html+='</div></div><div style="height:16px"></div></div>';
 
   document.getElementById('db-body').innerHTML=html;
@@ -999,6 +1082,9 @@ function exportHTML(){
   function hKpi(lbl,v,fn,unit){var s=fn(v||'');var clr=s==='ok'?'#76C810':s==='warn'?'#FCD34D':s==='bad'?'#FCA5A5':'rgba(255,255,255,0.3)';return '<div style="background:rgba(255,255,255,0.1);border:1px solid rgba(255,255,255,0.15);border-radius:8px;padding:10px 8px"><div style="font-size:10px;color:rgba(255,255,255,0.65);margin-bottom:4px">'+lbl+'</div><div style="font-size:24px;font-weight:700;color:'+clr+'">'+(v||'—')+'</div><div style="font-size:10px;color:rgba(255,255,255,0.5)">'+unit+'</div></div>';}
 
   body+='<div style="background:#00493C;border-radius:12px;padding:16px;margin-bottom:18px"><div style="font-size:11px;font-weight:700;color:#CCF895;letter-spacing:.5px;text-transform:uppercase;margin-bottom:12px">◆ Parámetros Críticos</div><div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:10px">'+hKpi('% M200 · Ag0',ag0M200!==null?String(ag0M200):'',sAg0M200,'%')+hKpi('% Sólidos · Ag0',ag0Sol!==null?String(ag0Sol):'',sAg6,'%')+hKpi('CN Libre · Ag0',ag0CN!==null?String(ag0CN):'',sAg0CN,'lb/tm')+hKpi('Pregnant Compósito',pregCLast!==null?String(pregCLast):'',sFree,'g/tm')+hKpi('Barren Compósito',barrCLast!==null?String(barrCLast):'',sBarren,'g/tm')+hKpi('Onzas Acumuladas',totalOz!==null?String(totalOz):'',sFree,'oz')+'</div>';
+  // CC en export (Bug #3)
+  var ccExp=calcCCvals();
+  body+='<div style="background:rgba(35,207,125,0.12);border:1.5px solid rgba(35,207,125,0.35);border-radius:8px;padding:12px;margin-top:12px;display:flex;gap:24px;flex-wrap:wrap"><div style="font-size:10px;color:#CCF895;font-weight:700;width:100%;text-transform:uppercase;letter-spacing:.3px;margin-bottom:4px">⟳ Carga Circulante</div><div><div style="font-size:10px;color:rgba(255,255,255,0.55)">Por % Sólidos</div><div style="font-size:24px;font-weight:700;color:'+(ccExp.sol!==null?'#76C810':'rgba(255,255,255,0.3)')+'">'+(ccExp.sol!==null?ccExp.sol+'%':'—')+'</div></div><div><div style="font-size:10px;color:rgba(255,255,255,0.55)">Por Malla 200</div><div style="font-size:24px;font-weight:700;color:'+(ccExp.mal!==null?'#76C810':'rgba(255,255,255,0.3)')+'">'+(ccExp.mal!==null?ccExp.mal+'%':'—')+'</div></div></div>';
   body+='<div style="background:rgba(118,200,16,0.12);border:1.5px solid #76C810;border-radius:8px;padding:12px;margin-top:12px"><div style="font-size:10px;color:#CCF895;font-weight:700;text-transform:uppercase;margin-bottom:8px">Onzas Acumuladas por Corte</div><div style="display:flex;gap:8px;flex-wrap:wrap">';
   H4.forEach(function(hh){var v=ozData.porCorte['h'+hh];body+='<div style="background:rgba(255,255,255,0.1);border-radius:6px;padding:6px 12px;text-align:center"><div style="font-size:10px;color:rgba(255,255,255,0.6)">H'+hh+'</div><div style="font-size:16px;font-weight:700;color:#76C810">'+(v!==undefined?v+'oz':'—')+'</div></div>';});
   body+='</div></div>';
@@ -1017,6 +1103,15 @@ function exportHTML(){
   body+='<div style="font-size:12px;font-weight:700;color:#00493C;padding:7px 12px;background:#EBF2E4;border-left:4px solid #76C810;margin-bottom:4px">Turbidez Filtros (NTU) — Eje dual</div><div style="font-size:10px;color:#5A7E6A;padding:0 12px;margin-bottom:8px">Eje izq: Entrada · Eje der: Salida (escalas independientes)</div><div class="cw" style="height:130px"><canvas id="ec-turb"></canvas></div>';
   body+=mkTbl('Dosificación Reactivos (H2,H4,H6,H8)',[{key:'s3_zinc',lbl:'Polvo de Zinc',unit:'g/min',fn:sFree},{key:'s3_cnlib',lbl:'Cianuro Libre',unit:'lb/ft',fn:sFree},{key:'s3_cndos',lbl:'Dosis Cianuro',unit:'s/L',fn:sFree}],H4);
   body+=mkTbl('Control de Presiones (H2,H4,H6,H8)',[{key:'s3_mic1',lbl:'Micronics 1',unit:'',fn:sFree},{key:'s3_mic2',lbl:'Micronics 2',unit:'',fn:sFree},{key:'s3_tvac',lbl:'Torre Vacío',unit:'',fn:sFree},{key:'s3_bvac',lbl:'Bomba Vacío',unit:'',fn:sFree},{key:'s3_bv1',lbl:'Bomba Vert. 1',unit:'',fn:sFree},{key:'s3_bv2',lbl:'Bomba Vert. 2',unit:'',fn:sFree},{key:'s3_bv3',lbl:'Bomba Vert. 3',unit:'',fn:sFree}],H4);
+  // Flujómetro en export
+  var flujExp=calcOzasFluj(),totalFlujExp=calcTotalOzFluj();
+  body+='<div style="margin-bottom:18px;border:2px solid #7C3AED;border-radius:10px;padding:14px;background:#F5F3FF"><div style="font-size:12px;font-weight:700;color:#5B21B6;padding:7px 12px;background:#EDE9FE;border-left:4px solid #7C3AED;margin-bottom:10px;border-radius:0 6px 6px 0">⚖ Auditoría: Vertedero vs Flujómetro</div>';
+  body+='<div style="display:flex;gap:16px;margin-bottom:12px;flex-wrap:wrap"><div style="flex:1;min-width:120px;background:#fff;border:1px solid #C8DCBA;border-radius:8px;padding:10px;text-align:center"><div style="font-size:10px;color:#5A7E6A">Total Vertedero</div><div style="font-size:22px;font-weight:700;color:#00493C">'+(totalOz||'—')+' oz</div></div><div style="flex:1;min-width:120px;background:#fff;border:1px solid #7C3AED;border-radius:8px;padding:10px;text-align:center"><div style="font-size:10px;color:#7C3AED">Total Flujómetro</div><div style="font-size:22px;font-weight:700;color:#5B21B6">'+(totalFlujExp||'—')+' oz</div></div></div>';
+  body+='<div style="overflow-x:auto"><table style="border-collapse:collapse;width:100%"><thead><tr><th style="background:#5B21B6;color:#fff;padding:6px 8px;text-align:left;font-size:11px;border:1px solid rgba(255,255,255,0.2)">Corte</th>'+H4.map(function(h){return'<th style="background:#5B21B6;color:#fff;padding:6px 8px;text-align:center;font-size:11px;border:1px solid rgba(255,255,255,0.2)">H'+h+'</th>';}).join('')+'</tr></thead><tbody>';
+  body+='<tr><td style="background:#EDE9FE;color:#1E4A38;padding:6px 8px;font-weight:700;font-size:12px;border:1px solid #C8DCBA">Δ Vol (m³)</td>'+H4.map(function(h){var d=flujExp.deltas['h'+h];return'<td style="padding:6px;text-align:center;border:1px solid #C8DCBA;font-weight:700;font-size:12px">'+(d!==undefined?d:'—')+'</td>';}).join('')+'</tr>';
+  body+='<tr><td style="background:#EDE9FE;color:#1E4A38;padding:6px 8px;font-weight:700;font-size:12px;border:1px solid #C8DCBA">Oz Vertedero</td>'+H4.map(function(h){var v=ozData.porCorte['h'+h];return'<td style="padding:6px;text-align:center;border:1px solid #C8DCBA;font-weight:700;font-size:12px;color:#00493C">'+(v!==undefined?v:'—')+'</td>';}).join('')+'</tr>';
+  body+='<tr><td style="background:#EDE9FE;color:#1E4A38;padding:6px 8px;font-weight:700;font-size:12px;border:1px solid #C8DCBA">Oz Flujómetro</td>'+H4.map(function(h){var v=flujExp.porCorte['h'+h];return'<td style="padding:6px;text-align:center;border:1px solid #C8DCBA;font-weight:700;font-size:12px;color:#5B21B6">'+(v!==undefined?v:'—')+'</td>';}).join('')+'</tr>';
+  body+='</tbody></table></div></div>';
   body+='</div></div>';
   body+='<div style="text-align:center;font-size:11px;color:#5A7E6A;padding:16px 0">HEMCO Nicaragua S.A. · Reporte generado el '+now.toLocaleString('es-NI')+'</div></body></html>';
 
@@ -1052,6 +1147,7 @@ window.abrirConfigModal=abrirConfigModal;
 window.guardarConfigModal=guardarConfigModal;
 window.cerrarConfigModal=cerrarConfigModal;
 window.resetCFG=resetCFG;
+window.updFlujDeltas=updFlujDeltas;
 // exportHTML se expone desde dashboard.js
 
 /* ═══ INIT ═══ */
