@@ -77,7 +77,7 @@ function calcOzasAcum(){
     var qMin=cmToM3h(V['s3_ton_min_h'+hh]);
     var qMax=cmToM3h(V['s3_ton_max_h'+hh]);
     if(!isNaN(pC)&&!isNaN(bC)&&qMin&&qMax&&pC>=bC){
-      var oz=(pC-bC)*(+qMin+ +qMax)/2/31.1035;
+      var oz=(pC-bC)*(+qMin+ +qMax)/31.1035;
       running+=oz;
       res.porCorte['h'+hh]=+oz.toFixed(1);      // producción de ESE bihora
       res.acum['h'+hh]=+running.toFixed(1);      // suma progresiva
