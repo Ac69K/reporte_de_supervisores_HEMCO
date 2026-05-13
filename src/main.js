@@ -46,21 +46,6 @@ function cargarCFG(){try{var s=localStorage.getItem('hemco_cfg');if(s){var c=JSO
 function guardarCFG(){try{localStorage.setItem('hemco_cfg',JSON.stringify(CFG));}catch(e){}}
 cargarCFG();
 
-/* ═══ EXCEPCIONES OPERATIVAS ═══ */
-var EXCODES=['CI','RT','FS','AR','ADA'];
-function isExCode(v){return typeof v==='string'&&EXCODES.indexOf(v.toUpperCase().trim())>=0;}
-function numOrNull(v){if(!v||isExCode(v)||isNaN(+v))return null;return +v;}
-// Inyectar CSS para estado neutral (gris)
-(function(){
-  var s=document.createElement('style');
-  s.textContent='.fi.neutral,.hi.neutral{background:rgba(100,116,139,0.12)!important;border-color:rgba(100,116,139,0.4)!important;color:#64748B!important}'+
-    'td.neutral{background:rgba(100,116,139,0.08);color:#64748B}'+
-    '.fdot.neutral{background:#64748B}'+
-    '.mini-val.neutral{background:rgba(100,116,139,0.12);color:#64748B}'+
-    '.hmap td.neutral{background:rgba(100,116,139,0.08);color:#64748B}';
-  document.head.appendChild(s);
-})();
-
 /* ═══ FÓRMULAS ═══ */
 function cmToM3h(cm){if(!cm||isNaN(+cm)||+cm<=0)return null;return(3600*0.832*Math.pow(+cm/100,2.5)).toFixed(2);}
 function pbToTph(v){if(!v||isNaN(+v)||+v<=0)return null;return(+v*6.223543276).toFixed(1);}
@@ -83,22 +68,19 @@ function calcCCvals(){
   return{sol:cs,mal:cm2};
 }
 
-/* ═══ ONZAS — porCorte = producción individual; acum = progresivo ═══ */
+/* ═══ ONZAS — BUG FIX #3: porCorte = producción individual; acum = progresivo ═══ */
 function calcOzasAcum(){
   var running=0, res={porCorte:{},acum:{}};
-  var pairs=[[1,2],[3,4],[5,6],[7,8]];
-  H4.forEach(function(hh,idx){
-    var pC=numOrNull(V['s3_pregC_h'+hh]);
-    var bC=numOrNull(V['s3_barC_h'+hh]);
-    var h1=pairs[idx][0], h2=pairs[idx][1];
-    var q1=cmToM3h(V['s3_ton_h'+h1]);
-    var q2=cmToM3h(V['s3_ton_h'+h2]);
-    if(pC!==null&&bC!==null&&pC>=bC&&(q1||q2)){
-      var qSum=(q1?+q1:0)+(q2?+q2:0);
-      var oz=(pC-bC)*qSum/31.1035;
+  H4.forEach(function(hh){
+    var pC=parseFloat(V['s3_pregC_h'+hh]);
+    var bC=parseFloat(V['s3_barC_h'+hh]);
+    var qMin=cmToM3h(V['s3_ton_min_h'+hh]);
+    var qMax=cmToM3h(V['s3_ton_max_h'+hh]);
+    if(!isNaN(pC)&&!isNaN(bC)&&qMin&&qMax&&pC>=bC){
+      var oz=(pC-bC)*(+qMin+ +qMax)/31.1035;
       running+=oz;
-      res.porCorte['h'+hh]=+oz.toFixed(1);
-      res.acum['h'+hh]=+running.toFixed(1);
+      res.porCorte['h'+hh]=+oz.toFixed(1);      // producción de ESE bihora
+      res.acum['h'+hh]=+running.toFixed(1);      // suma progresiva
     }
   });
   return res;
@@ -109,12 +91,42 @@ function calcTotalOz(){
   return keys.length>0?d.acum[keys[keys.length-1]]:null;
 }
 
+/* ═══ FLUJÓMETRO CONO DE ZINC — cálculo paralelo de auditoría ═══ */
+function calcOzasFluj(){
+  var running=0, res={porCorte:{},acum:{},deltas:{}};
+  var prev=parseFloat(V['fluj_h0']);
+  var H4ref=[2,4,6,8];
+  H4ref.forEach(function(hh){
+    var lect=parseFloat(V['fluj_h'+hh]);
+    if(!isNaN(prev)&&!isNaN(lect)&&lect>=prev){
+      var delta=lect-prev;
+      res.deltas['h'+hh]=+delta.toFixed(2);
+      var pC=parseFloat(V['s3_pregC_h'+hh]);
+      var bC=parseFloat(V['s3_barC_h'+hh]);
+      if(!isNaN(pC)&&!isNaN(bC)&&pC>=bC){
+        var oz=(pC-bC)*delta/31.1035;
+        running+=oz;
+        res.porCorte['h'+hh]=+oz.toFixed(1);
+        res.acum['h'+hh]=+running.toFixed(1);
+      }
+      prev=lect;
+    } else if(!isNaN(lect)){
+      prev=lect;
+    }
+  });
+  return res;
+}
+function calcTotalOzFluj(){
+  var d=calcOzasFluj(), keys=Object.keys(d.acum);
+  return keys.length>0?d.acum[keys[keys.length-1]]:null;
+}
+
 function calcRecupCortes(){
   var vals=[], res={};
   H4.forEach(function(hh){
-    var pC=numOrNull(V['s3_pregC_h'+hh]);
-    var bC=numOrNull(V['s3_barC_h'+hh]);
-    if(pC!==null&&bC!==null&&pC>0){
+    var pC=parseFloat(V['s3_pregC_h'+hh]);
+    var bC=parseFloat(V['s3_barC_h'+hh]);
+    if(!isNaN(pC)&&!isNaN(bC)&&pC>0){
       var r=((pC-bC)/pC*100);
       vals.push(r);
       res['h'+hh]=r.toFixed(1);
@@ -132,39 +144,36 @@ function getLastH4(rid){
   return null;
 }
 
-/* ═══ STATUS — leen de CFG; códigos de excepción → 'neutral' ═══ */
-function sGran(v){if(isExCode(v))return'neutral';if(!v||isNaN(+v))return'';return +v>=CFG.gran_ok?'ok':'bad';}
-function sPrim(v){if(isExCode(v))return'neutral';if(!v||isNaN(+v))return'';var n=+v;return n>=CFG.prim_lo&&n<=CFG.prim_hi?'ok':(n>=CFG.prim_lo-1&&n<=CFG.prim_hi+1?'warn':'bad');}
-function sSec(v){if(isExCode(v))return'neutral';if(!v||isNaN(+v))return'';var n=+v;return n>=CFG.sec_lo&&n<=CFG.sec_hi?'ok':(n>=CFG.sec_lo-1&&n<=CFG.sec_hi+1?'warn':'bad');}
-function sAlim(v){if(isExCode(v))return'neutral';if(!v||isNaN(+v))return'';var n=+v;if(n>=CFG.alim_ok_lo&&n<=CFG.alim_ok_hi)return'ok';if(n<CFG.alim_warn_lo||n>CFG.alim_warn_hi)return'bad';return'warn';}
-function sSol(v){if(isExCode(v))return'neutral';if(!v||isNaN(+v))return'';var n=+v;if(n<CFG.sol_bad)return'bad';if(n<=CFG.sol_warn)return'warn';if(n<=CFG.sol_ok)return'ok';return'warn';}
-function sPas(v){if(isExCode(v))return'neutral';if(!v||isNaN(+v))return'';var n=+v;if(n<CFG.pas_bad)return'bad';if(n<=CFG.pas_warn)return'warn';if(n<=CFG.pas_ok)return'ok';return'warn';}
-function sCN(v){if(isExCode(v))return'neutral';if(!v||isNaN(+v))return'';var n=+v;if(n<CFG.cn_bad_lo)return'bad';if(n<CFG.cn_warn_lo)return'warn';if(n<=CFG.cn_ok_hi)return'ok';if(n<=CFG.cn_warn_hi)return'warn';return'bad';}
-function sPH(v){if(isExCode(v))return'neutral';if(!v||isNaN(+v))return'';var n=+v;return n>=CFG.ph_ok_lo&&n<=CFG.ph_ok_hi?'ok':(n>=CFG.ph_warn_lo&&n<=CFG.ph_warn_hi?'warn':'bad');}
-function sFree(v){if(isExCode(v))return'neutral';if(!v||isNaN(+v))return'';return'ok';}
-function sEsp1(v){if(isExCode(v))return'neutral';if(!v||isNaN(+v))return'';var n=+v;if(n<CFG.esp1_lo)return'bad';if(n<=CFG.esp1_hi)return'ok';return'bad';}
-function sEsp89(v){if(isExCode(v))return'neutral';if(!v||isNaN(+v))return'';var n=+v;if(n<CFG.esp89_lo)return'bad';if(n<=CFG.esp89_hi)return'ok';return'bad';}
-function sAg6(v){if(isExCode(v))return'neutral';if(!v||isNaN(+v))return'';var n=+v;if(n<CFG.ag6_ok_lo)return'bad';if(n<=CFG.ag6_ok_hi)return'ok';if(n<=CFG.ag6_warn_hi)return'warn';return'bad';}
-function sAg0M200(v){if(isExCode(v))return'neutral';if(!v||isNaN(+v))return'';var n=+v;if(n<CFG.ag0m200_bad)return'bad';if(n<CFG.ag0m200_warn)return'warn';if(n<=CFG.ag0m200_ok)return'ok';return'warn';}
-function sAg0CN(v){if(isExCode(v))return'neutral';if(!v||isNaN(+v))return'';var n=+v;if(n<CFG.ag0cn_bad)return'bad';if(n<CFG.ag0cn_warn)return'warn';if(n<=CFG.ag0cn_ok)return'ok';return'warn';}
-function sAg0O2(v){if(isExCode(v))return'neutral';if(!v||isNaN(+v))return'';var n=+v;if(n<CFG.ag0o2_bad)return'bad';if(n<=CFG.ag0o2_ok)return'ok';return'warn';}
-function sAg0pH(v){if(isExCode(v))return'neutral';if(!v||isNaN(+v))return'';var n=+v;if(n<CFG.ag0ph_lo)return'bad';if(n<=CFG.ag0ph_hi)return'ok';return'warn';}
-function sTurbIn(v){if(isExCode(v))return'neutral';if(!v||isNaN(+v))return'';var n=+v;if(n<=CFG.turb_in_w1)return'warn';if(n<=CFG.turb_in_ok)return'ok';if(n<=CFG.turb_in_w2)return'warn';return'bad';}
-function sTurbOut(v){if(isExCode(v))return'neutral';if(!v||isNaN(+v))return'';var n=+v;if(n<CFG.turb_out_ok)return'ok';if(n<=CFG.turb_out_warn)return'warn';return'bad';}
-function sBarren(v){if(isExCode(v))return'neutral';if(!v||isNaN(+v))return'';return +v<CFG.barren_ok?'ok':'bad';}
-function sEspLab(v){if(isExCode(v))return'neutral';if(!v||isNaN(+v))return'';return +v<CFG.esplab_ok?'ok':'bad';}
-// Cambio 3: Validadores específicos de O2
-function sO2Cono(v){if(isExCode(v))return'neutral';if(!v||isNaN(+v))return'';var n=+v;if(n<1)return'ok';if(n===1)return'warn';return'bad';}
-function sO2Vert(v){if(isExCode(v))return'neutral';if(!v||isNaN(+v))return'';var n=+v;if(n<2)return'ok';if(n===2)return'warn';return'bad';}
+/* ═══ STATUS — leen de CFG (editables) ═══ */
+function sGran(v){if(!v||isNaN(+v))return'';return +v>=CFG.gran_ok?'ok':'bad';}
+function sPrim(v){if(!v||isNaN(+v))return'';var n=+v;return n>=CFG.prim_lo&&n<=CFG.prim_hi?'ok':(n>=CFG.prim_lo-1&&n<=CFG.prim_hi+1?'warn':'bad');}
+function sSec(v){if(!v||isNaN(+v))return'';var n=+v;return n>=CFG.sec_lo&&n<=CFG.sec_hi?'ok':(n>=CFG.sec_lo-1&&n<=CFG.sec_hi+1?'warn':'bad');}
+function sAlim(v){if(!v||isNaN(+v))return'';var n=+v;if(n>=CFG.alim_ok_lo&&n<=CFG.alim_ok_hi)return'ok';if(n<CFG.alim_warn_lo||n>CFG.alim_warn_hi)return'bad';return'warn';}
+function sSol(v){if(!v||isNaN(+v))return'';var n=+v;if(n<CFG.sol_bad)return'bad';if(n<=CFG.sol_warn)return'warn';if(n<=CFG.sol_ok)return'ok';return'warn';}
+function sPas(v){if(!v||isNaN(+v))return'';var n=+v;if(n<CFG.pas_bad)return'bad';if(n<=CFG.pas_warn)return'warn';if(n<=CFG.pas_ok)return'ok';return'warn';}
+function sCN(v){if(!v||isNaN(+v))return'';var n=+v;if(n<CFG.cn_bad_lo)return'bad';if(n<CFG.cn_warn_lo)return'warn';if(n<=CFG.cn_ok_hi)return'ok';if(n<=CFG.cn_warn_hi)return'warn';return'bad';}
+function sPH(v){if(!v||isNaN(+v))return'';var n=+v;return n>=CFG.ph_ok_lo&&n<=CFG.ph_ok_hi?'ok':(n>=CFG.ph_warn_lo&&n<=CFG.ph_warn_hi?'warn':'bad');}
+function sFree(v){if(!v||isNaN(+v))return'';return'ok';}
+function sEsp1(v){if(!v||isNaN(+v))return'';var n=+v;if(n<CFG.esp1_lo)return'bad';if(n<=CFG.esp1_hi)return'ok';return'bad';}
+function sEsp89(v){if(!v||isNaN(+v))return'';var n=+v;if(n<CFG.esp89_lo)return'bad';if(n<=CFG.esp89_hi)return'ok';return'bad';}
+function sAg6(v){if(!v||isNaN(+v))return'';var n=+v;if(n<CFG.ag6_ok_lo)return'bad';if(n<=CFG.ag6_ok_hi)return'ok';if(n<=CFG.ag6_warn_hi)return'warn';return'bad';}
+function sAg0M200(v){if(!v||isNaN(+v))return'';var n=+v;if(n<CFG.ag0m200_bad)return'bad';if(n<CFG.ag0m200_warn)return'warn';if(n<=CFG.ag0m200_ok)return'ok';return'warn';}
+function sAg0CN(v){if(!v||isNaN(+v))return'';var n=+v;if(n<CFG.ag0cn_bad)return'bad';if(n<CFG.ag0cn_warn)return'warn';if(n<=CFG.ag0cn_ok)return'ok';return'warn';}
+function sAg0O2(v){if(!v||isNaN(+v))return'';var n=+v;if(n<CFG.ag0o2_bad)return'bad';if(n<=CFG.ag0o2_ok)return'ok';return'warn';}
+function sAg0pH(v){if(!v||isNaN(+v))return'';var n=+v;if(n<CFG.ag0ph_lo)return'bad';if(n<=CFG.ag0ph_hi)return'ok';return'warn';}
+function sTurbIn(v){if(!v||isNaN(+v))return'';var n=+v;if(n<=CFG.turb_in_w1)return'warn';if(n<=CFG.turb_in_ok)return'ok';if(n<=CFG.turb_in_w2)return'warn';return'bad';}
+function sTurbOut(v){if(!v||isNaN(+v))return'';var n=+v;if(n<CFG.turb_out_ok)return'ok';if(n<=CFG.turb_out_warn)return'warn';return'bad';}
+function sBarren(v){if(!v||isNaN(+v))return'';return +v<CFG.barren_ok?'ok':'bad';}
+function sEspLab(v){if(!v||isNaN(+v))return'';return +v<CFG.esplab_ok?'ok':'bad';}
 
-var FNS={sGran:sGran,sPrim:sPrim,sSec:sSec,sAlim:sAlim,sSol:sSol,sPas:sPas,sCN:sCN,sPH:sPH,sFree:sFree,sEsp1:sEsp1,sEsp89:sEsp89,sAg6:sAg6,sAg0M200:sAg0M200,sAg0CN:sAg0CN,sAg0O2:sAg0O2,sAg0pH:sAg0pH,sTurbIn:sTurbIn,sTurbOut:sTurbOut,sBarren:sBarren,sEspLab:sEspLab,sO2Cono:sO2Cono,sO2Vert:sO2Vert};
+var FNS={sGran:sGran,sPrim:sPrim,sSec:sSec,sAlim:sAlim,sSol:sSol,sPas:sPas,sCN:sCN,sPH:sPH,sFree:sFree,sEsp1:sEsp1,sEsp89:sEsp89,sAg6:sAg6,sAg0M200:sAg0M200,sAg0CN:sAg0CN,sAg0O2:sAg0O2,sAg0pH:sAg0pH,sTurbIn:sTurbIn,sTurbOut:sTurbOut,sBarren:sBarren,sEspLab:sEspLab};
 
 /* ═══ BUILDERS ═══ */
 function mk(id,lbl,unit,fn,dis){
   var v=V[id]||'',s=fn(v);
-  if(dis)return '<div class="fcard"><div class="flbl">'+lbl+'</div><div class="frow"><input type="text" class="fi" disabled placeholder="---"><span class="fu">'+unit+'</span></div></div>';
+  if(dis)return '<div class="fcard"><div class="flbl">'+lbl+'</div><div class="frow"><input type="number" class="fi" disabled placeholder="---"><span class="fu">'+unit+'</span></div></div>';
   return '<div class="fcard"><div class="flbl">'+lbl+'</div><div class="frow">'+
-    '<input type="text" class="fi '+s+'" id="fi-'+id+'" value="'+v+'" placeholder="---" inputmode="decimal" oninput="sv(\''+id+'\',this.value,\''+fn.name+'\')">'+
+    '<input type="number" class="fi '+s+'" id="fi-'+id+'" value="'+v+'" placeholder="---" inputmode="decimal" oninput="sv(\''+id+'\',this.value,\''+fn.name+'\')">'+
     '<span class="fu">'+unit+'</span><div class="fdot '+s+'" id="fd-'+id+'"></div></div></div>';
 }
 function sv(id,v,fnName){
@@ -188,7 +197,7 @@ function hr(rid,lbl,unit,hrs,fn,step,ri,blk){
     else{
       var v=V[k]||'',s=fn(v);
       c+='<td class="'+(ic?'cur ':'')+s+'" id="td-'+k+'">'+
-        '<input type="text" step="'+step+'" inputmode="decimal" class="hi '+s+'" id="hgi-'+k+'" value="'+v+'" '+
+        '<input type="number" step="'+step+'" inputmode="decimal" class="hi '+s+'" id="hgi-'+k+'" value="'+v+'" '+
         'onfocus="onGF(\''+rid+'\','+ri+','+j+')" '+
         'oninput="onCI(\''+k+'\',this.value,\''+fn.name+'\','+h+',\''+rid+'\','+ri+','+j+')">'+
         '</td>';
@@ -276,21 +285,16 @@ function togC(c){CA[c]=!CA[c];guardarLocal();renderSub();}
 function updateTonDisplay(){
   var el=document.getElementById('ton-disp');if(!el)return;
   var rows='';
-  H8.forEach(function(hh){
-    var cm=V['s3_ton_h'+hh]||'',q=cmToM3h(cm);
-    rows+='<div style="display:flex;align-items:center;gap:10px;margin-top:4px">'+
+  H4.forEach(function(hh){
+    var mn=V['s3_ton_min_h'+hh]||'',mx=V['s3_ton_max_h'+hh]||'';
+    var q1=cmToM3h(mn),q2=cmToM3h(mx);
+    rows+='<div style="display:flex;align-items:center;gap:10px;margin-top:6px">'+
       '<div style="width:28px;font-size:11px;color:var(--mlt)">H'+hh+'</div>'+
-      '<div style="flex:1"><div class="ton-w-lbl">'+(cm&&!isExCode(cm)?cm+' cm → <b>'+q+' m³/h</b>':(isExCode(cm)?'<b style="color:#64748B">'+cm+'</b>':'—'))+'</div></div></div>';
+      '<div style="flex:1"><div class="ton-w-lbl">'+( mn?mn+' cm → <b>'+q1+' m³/h</b>':'Mín: —')+'</div></div>'+
+      '<div style="flex:1"><div class="ton-w-lbl">'+( mx?mx+' cm → <b>'+q2+' m³/h</b>':'Máx: —')+'</div></div>'+
+      '</div>';
   });
-  var pairs=[[1,2],[3,4],[5,6],[7,8]];
-  rows+='<div style="border-top:1px solid rgba(255,255,255,0.15);margin-top:8px;padding-top:8px"><div class="ton-w-lbl" style="margin-bottom:4px">Suma por corte (Q_impar + Q_par)</div>';
-  pairs.forEach(function(p,i){
-    var q1=cmToM3h(V['s3_ton_h'+p[0]]),q2=cmToM3h(V['s3_ton_h'+p[1]]);
-    var sum=(q1?+q1:0)+(q2?+q2:0);
-    rows+='<div style="display:flex;gap:10px;margin-top:3px"><div style="width:28px;font-size:11px;color:var(--ml)">H'+H4[i]+'</div><div class="ton-w-val" style="font-size:16px">'+(q1||q2?sum.toFixed(1)+' m³':'—')+'</div></div>';
-  });
-  rows+='</div>';
-  el.innerHTML='<div class="ton-w-lbl">Caudal horario y suma por corte</div>'+rows;
+  el.innerHTML='<div class="ton-w-lbl">Caudal calculado por corte</div>'+rows;
 }
 
 /* ═══ SECTION 1 ═══ */
@@ -299,7 +303,7 @@ function rMol(){
   regGrid('mol',[mkR('mol_md1',H8),mkR('mol_md2',H8),mkR('mol_sep',H8),mkR('mol_m1',H8),mkR('mol_m2',H8),mkR('mol_m4',H8),mkR('mol_m5',H8)]);
   return '<div class="stitle">% Sólidos Descarga Molinos</div>'+gl('H1–H8','▲▼ en header para navegar')+
     '<div class="hwrap"><table class="hgrid"><thead><tr><th class="rl">Molino</th><th>Un.</th>'+gHead(H8)+'</tr></thead><tbody>'+
-    hr('mol_md1','MD1 Secundario','%',H8,sSec,'any',0)+hr('mol_md2','MD2 Primario','%',H8,sPrim,'any',1)+
+    hr('mol_md1','MD1 Primario','%',H8,sPrim,'any',0)+hr('mol_md2','MD2 Primario','%',H8,sPrim,'any',1)+
     hr('mol_sep','Sepro','%',H8,sSec,'any',2)+hr('mol_m1','Molino 1','%',H8,sSec,'any',3)+
     hr('mol_m2','Molino 2','%',H8,sSec,'any',4)+hr('mol_m4','Molino 4','%',H8,sSec,'any',5)+hr('mol_m5','Molino 5','%',H8,sSec,'any',6)+'</tbody></table></div>';
 }
@@ -354,17 +358,17 @@ function rPhM(){
 
 /* ═══ SECTION 2 ═══ */
 function rEsp1(){
-  regGrid('esp1s',[mkR('esp1a_sol',H4),mkR('esp1b_sol',H4)]);
+  regGrid('esp1s',[mkR('esp1a_sol',H8),mkR('esp1b_sol',H8)]);
   regGrid('esp1t',[mkR('esp1a_trb',H4),mkR('esp1b_trb',H4)]);
   regGrid('esp1d',[mkR('esp1a_sed',H4),mkR('esp3b_sed',H4)]);
-  return '<div class="stitle">Espesadores 1A y 1B</div>'+gl('% Sólidos','H2,H4,H6,H8 (bihorario)')+
-    '<div class="hwrap"><table class="hgrid"><thead><tr><th class="rl">Espesador</th><th>Un.</th>'+gHead(H4)+'</tr></thead><tbody>'+hr('esp1a_sol','Esp. 1A','%',H4,sEsp1,'any',0)+hr('esp1b_sol','Esp. 1B','%',H4,sEsp1,'any',1)+'</tbody></table></div>'+
+  return '<div class="stitle">Espesadores 1A y 1B</div>'+gl('% Sólidos','H1–H8')+
+    '<div class="hwrap"><table class="hgrid"><thead><tr><th class="rl">Espesador</th><th>Un.</th>'+gHead(H8)+'</tr></thead><tbody>'+hr('esp1a_sol','Esp. 1A','%',H8,sEsp1,'any',0)+hr('esp1b_sol','Esp. 1B','%',H8,sEsp1,'any',1)+'</tbody></table></div>'+
     gl('Turbidez','H2,H4,H6,H8')+'<div class="hwrap"><table class="hgrid"><thead><tr><th class="rl">Espesador</th><th>Un.</th>'+gHead(H4)+'</tr></thead><tbody>'+hr('esp1a_trb','Esp. 1A','NTU',H4,sTurbIn,'any',0)+hr('esp1b_trb','Esp. 1B','NTU',H4,sTurbIn,'any',1)+'</tbody></table></div>'+
     gl('Sedimentación','H2,H4,H6,H8')+'<div class="hwrap"><table class="hgrid"><thead><tr><th class="rl">Equipo</th><th>Un.</th>'+gHead(H4)+'</tr></thead><tbody>'+hr('esp1a_sed','Esp. 1A','cm/s',H4,sFree,'any',0)+hr('esp3b_sed','Esp. 3B','cm/s',H4,sFree,'any',1)+'</tbody></table></div>';
 }
 function rEsp3b(){
-  regGrid('e3bs',[mkR('esp3b_sol',H4)]);regGrid('e3bp',[mkR('esp3b_pol',H4)]);
-  return '<div class="stitle">Espesador 3B</div>'+gl('% Sólidos','H2,H4,H6,H8 (bihorario)')+'<div class="hwrap"><table class="hgrid"><thead><tr><th class="rl">Equipo</th><th>Un.</th>'+gHead(H4)+'</tr></thead><tbody>'+hr('esp3b_sol','Esp. 3B','%',H4,sEsp1,'any',0)+'</tbody></table></div>'+
+  regGrid('e3bs',[mkR('esp3b_sol',H8)]);regGrid('e3bp',[mkR('esp3b_pol',H4)]);
+  return '<div class="stitle">Espesador 3B</div>'+gl('% Sólidos','H1–H8')+'<div class="hwrap"><table class="hgrid"><thead><tr><th class="rl">Equipo</th><th>Un.</th>'+gHead(H8)+'</tr></thead><tbody>'+hr('esp3b_sol','Esp. 3B','%',H8,sEsp1,'any',0)+'</tbody></table></div>'+
     gl('Policloruro','H2,H4,H6,H8')+'<div class="hwrap"><table class="hgrid"><thead><tr><th class="rl">Parámetro</th><th>Un.</th>'+gHead(H4)+'</tr></thead><tbody>'+hr('esp3b_pol','Policloruro','ml/min',H4,sFree,'any',0)+'</tbody></table></div>';
 }
 function rEsp89(){
@@ -392,22 +396,23 @@ function rAg12(){
 /* ═══ SECTION 3 ═══ */
 function rS3lab(){
   regGrid('s3lab',[mkR('s3_pregE',H4),mkR('s3_pregC',H4),mkR('s3_barC',H4),mkR('s3_barE',H4),mkR('s3_esp8',H4),mkR('s3_esp9',H4)]);
-  regGrid('s3ton',[mkR('s3_ton_h',H8)]);
+  regGrid('s3ton',[mkR('s3_ton_min',H4),mkR('s3_ton_max',H4)]);
   var h='<div class="stitle">Lab Químico · Precipitación</div>'+gl('Soluciones','H2,H4,H6,H8 · g/tm')+
     '<div class="hwrap"><table class="hgrid"><thead><tr><th class="rl">Muestra</th><th>Un.</th>'+gHead(H4)+'</tr></thead><tbody>'+
     hr('s3_pregE','Pregnant Especial','g/tm',H4,sFree,'0.001',0)+hr('s3_pregC','Pregnant Compósito','g/tm',H4,sFree,'0.001',1)+
     hr('s3_barC','Barren Compósito','g/tm',H4,sBarren,'0.001',2)+hr('s3_barE','Barren Especial','g/tm',H4,sBarren,'0.001',3)+
     hr('s3_esp8','Espesador 8','g/tm',H4,sEspLab,'0.001',4)+hr('s3_esp9','Espesador 9','g/tm',H4,sEspLab,'0.001',5)+'</tbody></table></div>'+
-    gl('Tonelaje/Caudal Vertedero','H1–H8 · Lectura en cm')+
-    '<div class="hwrap"><table class="hgrid"><thead><tr><th class="rl">Medición</th><th>Un.</th>'+gHead(H8)+'</tr></thead><tbody>'+
-    hr('s3_ton_h','Lectura (cm)','cm',H8,sFree,'any',0)+'</tbody></table></div>'+
-    '<div class="ton-widget" id="ton-disp"><div class="ton-w-lbl">Ingresa las lecturas para ver el caudal horario</div></div>';
+    gl('Tonelaje','H2,H4,H6,H8 · Ingresar en cm')+
+    '<div class="hwrap"><table class="hgrid"><thead><tr><th class="rl">Medición</th><th>Un.</th>'+gHead(H4)+'</tr></thead><tbody>'+
+    hr('s3_ton_min','Tonelaje Mínimo','cm',H4,sFree,'any',0)+
+    hr('s3_ton_max','Tonelaje Máximo','cm',H4,sFree,'any',1)+'</tbody></table></div>'+
+    '<div class="ton-widget" id="ton-disp"><div class="ton-w-lbl">Ingresa los cm para ver el caudal por corte</div></div>';
   setTimeout(updateTonDisplay,80);return h;
 }
 function rS3dos(){
-  regGrid('s3dos',[mkR('s3_zinc',H8),mkR('s3_cnlib',H8),mkR('s3_cndos',H8)]);
-  return '<div class="stitle">Dosificación de Reactivos</div>'+gl('H1–H8')+'<div class="hwrap"><table class="hgrid"><thead><tr><th class="rl">Reactivo</th><th>Un.</th>'+gHead(H8)+'</tr></thead><tbody>'+
-    hr('s3_zinc','Polvo de Zinc','g/min',H8,sFree,'0.1',0)+hr('s3_cnlib','Cianuro Libre','lb/ft',H8,sFree,'0.01',1)+hr('s3_cndos','Dosis Cianuro','s/L',H8,sFree,'0.1',2)+'</tbody></table></div>';
+  regGrid('s3dos',[mkR('s3_zinc',H4),mkR('s3_cnlib',H4),mkR('s3_cndos',H4)]);
+  return '<div class="stitle">Dosificación de Reactivos</div>'+gl('H2,H4,H6,H8')+'<div class="hwrap"><table class="hgrid"><thead><tr><th class="rl">Reactivo</th><th>Un.</th>'+gHead(H4)+'</tr></thead><tbody>'+
+    hr('s3_zinc','Polvo de Zinc','g/min',H4,sFree,'0.1',0)+hr('s3_cnlib','Cianuro Libre','lb/ft',H4,sFree,'0.01',1)+hr('s3_cndos','Dosis Cianuro','s/L',H4,sFree,'0.1',2)+'</tbody></table></div>';
 }
 function rS3pre(){
   regGrid('s3pre',[mkR('s3_mic1',H4),mkR('s3_mic2',H4),mkR('s3_tvac',H4),mkR('s3_bvac',H4),mkR('s3_bv1',H4),mkR('s3_bv2',H4),mkR('s3_bv3',H4)]);
@@ -415,25 +420,61 @@ function rS3pre(){
     hr('s3_mic1','Micronics 1','',H4,sFree,'any',0)+hr('s3_mic2','Micronics 2','',H4,sFree,'any',1)+hr('s3_tvac','Torre Vacío','',H4,sFree,'any',2)+hr('s3_bvac','Bomba Vacío','',H4,sFree,'any',3)+hr('s3_bv1','Bomba Vert. 1','',H4,sFree,'any',4)+hr('s3_bv2','Bomba Vert. 2','',H4,sFree,'any',5)+hr('s3_bv3','Bomba Vert. 3','',H4,sFree,'any',6)+'</tbody></table></div>';
 }
 function rS3turb(){
-  regGrid('s3turb',[mkR('s3_turb_in',H8),mkR('s3_turb_out',H8)]);
-  return '<div class="stitle">Turbidez Filtros Clarificadores</div>'+gl('H1–H8')+'<div class="hwrap"><table class="hgrid"><thead><tr><th class="rl">Medición</th><th>Un.</th>'+gHead(H8)+'</tr></thead><tbody>'+
-    hr('s3_turb_in','Entrada','NTU',H8,sTurbIn,'any',0)+hr('s3_turb_out','Salida','NTU',H8,sTurbOut,'any',1)+'</tbody></table></div>';
+  regGrid('s3turb',[mkR('s3_turb_in',H4),mkR('s3_turb_out',H4)]);
+  return '<div class="stitle">Turbidez Filtros Clarificadores</div>'+gl('H2,H4,H6,H8')+'<div class="hwrap"><table class="hgrid"><thead><tr><th class="rl">Medición</th><th>Un.</th>'+gHead(H4)+'</tr></thead><tbody>'+
+    hr('s3_turb_in','Entrada','NTU',H4,sTurbIn,'any',0)+hr('s3_turb_out','Salida','NTU',H4,sTurbOut,'any',1)+'</tbody></table></div>';
 }
 function rS3o2(){
   regGrid('s3o2',[mkR('s3_o2_10',H4),mkR('s3_o2_25',H4),mkR('s3_o2_50',H4),mkR('s3_o2_niv',H4),mkR('s3_o2_vert',H4)]);
-  return '<div class="stitle">O2 Cono de Precipitación</div>'+gl('ppm','H2,H4,H6,H8')+
-    '<div class="legend"><div class="li"><div class="ld" style="background:var(--gn)"></div>Cono: &lt;1 Verde</div><div class="li"><div class="ld" style="background:var(--yn)"></div>Cono: =1 Amarillo</div><div class="li"><div class="ld" style="background:var(--rd)"></div>Cono: &gt;1 Rojo</div><div class="li"><div class="ld" style="background:var(--gn)"></div>Vert.: &lt;2 Verde</div></div>'+
-    '<div class="hwrap"><table class="hgrid"><thead><tr><th class="rl">Punto</th><th>Un.</th>'+gHead(H4)+'</tr></thead><tbody>'+
-    hr('s3_o2_10','10 cm','ppm',H4,sO2Cono,'0.1',0)+hr('s3_o2_25','25 cm','ppm',H4,sO2Cono,'0.1',1)+hr('s3_o2_50','50 cm','ppm',H4,sO2Cono,'0.1',2)+hr('s3_o2_niv','Nivel %','%',H4,sFree,'any',3)+hr('s3_o2_vert','Vertedero','ppm',H4,sO2Vert,'0.1',4)+'</tbody></table></div>';
+  return '<div class="stitle">O2 Cono de Precipitación</div>'+gl('ppm','H2,H4,H6,H8')+'<div class="hwrap"><table class="hgrid"><thead><tr><th class="rl">Punto</th><th>Un.</th>'+gHead(H4)+'</tr></thead><tbody>'+
+    hr('s3_o2_10','10 cm','ppm',H4,sAg0O2,'0.1',0)+hr('s3_o2_25','25 cm','ppm',H4,sAg0O2,'0.1',1)+hr('s3_o2_50','50 cm','ppm',H4,sAg0O2,'0.1',2)+hr('s3_o2_niv','Nivel %','%',H4,sFree,'any',3)+hr('s3_o2_vert','Vertedero','ppm',H4,sAg0O2,'0.1',4)+'</tbody></table></div>';
+}
+function rS3fluj(){
+  var h0=V['fluj_h0']||'';
+  var h='<div class="stitle">Flujómetro Cono de Zinc</div>'+
+    gl('Lectura Inicial (turno anterior)')+'<div class="fgrid"><div class="fcard"><div class="flbl">Lectura H0 (m³)</div><div class="frow">'+
+    '<input type="number" class="fi" id="fi-fluj_h0" value="'+h0+'" placeholder="---" inputmode="decimal" step="0.01" oninput="V[\'fluj_h0\']=this.value;updFlujDeltas();programarSyncNube()">'+
+    '<span class="fu">m³</span></div></div></div>'+
+    gl('Lecturas Bihorarias','H2,H4,H6,H8')+
+    '<div class="hwrap"><table class="hgrid"><thead><tr><th class="rl">Dato</th><th>Un.</th>'+gHead(H4)+'</tr></thead><tbody>';
+  // Fila de lecturas
+  h+='<tr><td class="rl">Lectura</td><td class="uc">m³</td>';
+  H4.forEach(function(hh){var k='fluj_h'+hh,v=V[k]||'';
+    h+='<td'+(hh===curH?' class="cur"':'')+'><input type="number" step="0.01" inputmode="decimal" class="hi" id="hgi-'+k+'" value="'+v+'" oninput="V[\''+k+'\']=this.value;updFlujDeltas();programarSyncNube()"></td>';
+  });
+  h+='</tr></tbody></table></div>';
+  // Widget de deltas calculados
+  h+='<div class="ton-widget" id="fluj-deltas"><div class="ton-w-lbl">Ingresa H0 y lecturas para ver deltas</div></div>';
+  setTimeout(updFlujDeltas,80);
+  return h;
+}
+function updFlujDeltas(){
+  var el=document.getElementById('fluj-deltas');if(!el)return;
+  var fd=calcOzasFluj();
+  var rows='';
+  var prev=parseFloat(V['fluj_h0']);
+  H4.forEach(function(hh){
+    var lect=V['fluj_h'+hh]||'';
+    var d=fd.deltas['h'+hh], oz=fd.porCorte['h'+hh], ac=fd.acum['h'+hh];
+    rows+='<div style="display:flex;align-items:center;gap:10px;margin-top:6px">'+
+      '<div style="width:28px;font-size:11px;color:var(--mlt)">H'+hh+'</div>'+
+      '<div style="flex:1"><div class="ton-w-lbl">Δ Vol: <b>'+(d!==undefined?d+' m³':'—')+'</b></div></div>'+
+      '<div style="flex:1"><div class="ton-w-lbl">Oz: <b>'+(oz!==undefined?oz:'—')+'</b></div></div>'+
+      '<div style="flex:1"><div class="ton-w-lbl">Acum: <b style="color:var(--ml)">'+(ac!==undefined?ac:'—')+'</b></div></div></div>';
+  });
+  var totalF=calcTotalOzFluj();
+  el.innerHTML='<div class="ton-w-lbl">Volumen procesado y onzas por flujómetro</div>'+rows+
+    '<div style="margin-top:10px;border-top:1px solid rgba(255,255,255,0.15);padding-top:8px">'+
+    '<div class="ton-w-lbl">Total Flujómetro:</div><div class="ton-w-val">'+(totalF!==null?totalF+' oz':'—')+'</div></div>';
 }
 
-var R={s1_gran:rGran,s1_mol:rMol,s1_cc:rCC,s1_alim:rAlim,s1_cg:rCG,s1_peso:rPeso,s1_phcn:rPhCN,s1_phm:rPhM,s2_esp1:rEsp1,s2_esp3b:rEsp3b,s2_esp89:rEsp89,s2_ag0:rAg0,s2_ag12:rAg12,s3_lab:rS3lab,s3_dos:rS3dos,s3_pre:rS3pre,s3_turb:rS3turb,s3_o2:rS3o2};
+var R={s1_gran:rGran,s1_mol:rMol,s1_cc:rCC,s1_alim:rAlim,s1_cg:rCG,s1_peso:rPeso,s1_phcn:rPhCN,s1_phm:rPhM,s2_esp1:rEsp1,s2_esp3b:rEsp3b,s2_esp89:rEsp89,s2_ag0:rAg0,s2_ag12:rAg12,s3_lab:rS3lab,s3_dos:rS3dos,s3_pre:rS3pre,s3_turb:rS3turb,s3_o2:rS3o2,s3_fluj:rS3fluj};
 
 /* ═══ SECCIONES ═══ */
 var SECS=[
   {title:'Trituración y Molienda',subs:[{id:'s1_gran',label:'1.1 Granulometrías'},{id:'s1_mol',label:'1.2 Sólidos Molinos'},{id:'s1_cc',label:'1.3 Carga Circulante'},{id:'s1_alim',label:'1.4 Alimento Ciclones'},{id:'s1_cg',label:'1.5 Caja General'},{id:'s1_peso',label:'1.6 Pesómetros'},{id:'s1_phcn',label:'1.7 pH Tanques CN'},{id:'s1_phm',label:'1.8 Medición pH'}]},
   {title:'Agitadores y Espesadores',subs:[{id:'s2_esp1',label:'2.1 Esp. 1A y 1B'},{id:'s2_esp3b',label:'2.2 Espesador 3B'},{id:'s2_esp89',label:'2.3 Esp. 8, 9 y Ag. 6'},{id:'s2_ag0',label:'2.4 Agitador 0'},{id:'s2_ag12',label:'2.5 Agitadores 1 y 2'}]},
-  {title:'Precipitación',subs:[{id:'s3_lab',label:'3.1 Lab Químico'},{id:'s3_dos',label:'3.2 Dosificación'},{id:'s3_pre',label:'3.3 Presiones'},{id:'s3_turb',label:'3.4 Turbidez'},{id:'s3_o2',label:'3.5 O2 Cono'}]}
+  {title:'Precipitación',subs:[{id:'s3_lab',label:'3.1 Lab Químico'},{id:'s3_dos',label:'3.2 Dosificación'},{id:'s3_pre',label:'3.3 Presiones'},{id:'s3_turb',label:'3.4 Turbidez'},{id:'s3_o2',label:'3.5 O2 Cono'},{id:'s3_fluj',label:'3.6 Flujómetro'}]}
 ];
 
 /* ═══ GOOGLE SHEETS SYNC ═══ */
@@ -933,7 +974,7 @@ function renderDashboard(){
   html+='<div><div class="db-ct">pH por Equipo · H1–H8</div><div class="db-cw"><canvas id="ch-ph"></canvas></div></div>';
   html+='<div><div class="db-ct">% Sólidos Alimento Ciclones · H2,H4,H6,H8</div><div class="db-cw sm"><canvas id="ch-alim"></canvas></div></div>';
   html+='<div><div class="db-ct">Sólidos Molinos · Heatmap</div><div style="overflow-x:auto"><table class="hmap"><thead><tr><th class="rl">Molino</th>'+H8.map(function(h){return'<th>H'+h+'</th>';}).join('')+'</tr></thead><tbody>'+
-    heatRow('mol_md1','MD1',H8,sSec)+heatRow('mol_md2','MD2',H8,sPrim)+heatRow('mol_sep','Sepro',H8,sSec)+
+    heatRow('mol_md1','MD1',H8,sPrim)+heatRow('mol_md2','MD2',H8,sPrim)+heatRow('mol_sep','Sepro',H8,sSec)+
     heatRow('mol_m1','M1',H8,sSec)+heatRow('mol_m2','M2',H8,sSec)+heatRow('mol_m4','M4',H8,sSec)+heatRow('mol_m5','M5',H8,sSec)+
     '</tbody></table></div></div>';
   var ccD=calcCCvals();
@@ -951,19 +992,15 @@ function renderDashboard(){
   html+='<div><div class="db-ct">O2 Agitadores 1 y 2 (ppm)</div><div class="db-cw sm"><canvas id="ch-ag12"></canvas></div></div>';
   // Datos faltantes #2: Sedimentación y Policloruro
   html+='<div><div class="db-ct" style="margin-bottom:6px">Sedimentación Espesadores (cm/s) · H2,H4,H6,H8</div><div style="overflow-x:auto"><table class="hmap"><thead><tr><th class="rl">Equipo</th>'+H4.map(function(h){return'<th>H'+h+'</th>';}).join('')+'</tr></thead><tbody>'+heatRow('esp1a_sed','Esp. 1A',H4,sFree)+heatRow('esp1b_sed','Esp. 1B',H4,sFree)+heatRow('esp3b_sed','Esp. 3B',H4,sFree)+'</tbody></table></div></div>';
-  html+='<div><div class="db-ct" style="margin-bottom:6px">Dosificación Reactivos · H1–H8</div><div style="overflow-x:auto"><table class="hmap"><thead><tr><th class="rl">Reactivo</th>'+H8.map(function(h){return'<th>H'+h+'</th>';}).join('')+'</tr></thead><tbody>'+heatRow('esp3b_pol','Policloruro (ml/min)',H8,sFree)+heatRow('s3_zinc','Polvo Zinc (g/min)',H8,sFree)+heatRow('s3_cnlib','CN Libre (lb/ft)',H8,sFree)+heatRow('s3_cndos','Dosis CN (s/L)',H8,sFree)+'</tbody></table></div></div>';
+  html+='<div><div class="db-ct" style="margin-bottom:6px">Dosificación Reactivos · H2,H4,H6,H8</div><div style="overflow-x:auto"><table class="hmap"><thead><tr><th class="rl">Reactivo</th>'+H4.map(function(h){return'<th>H'+h+'</th>';}).join('')+'</tr></thead><tbody>'+heatRow('esp3b_pol','Policloruro (ml/min)',H4,sFree)+heatRow('s3_zinc','Polvo Zinc (g/min)',H4,sFree)+heatRow('s3_cnlib','CN Libre (lb/ft)',H4,sFree)+heatRow('s3_cndos','Dosis CN (s/L)',H4,sFree)+'</tbody></table></div></div>';
   html+='</div></div>';
   // SEC 3
   var ozData=calcOzasAcum();
   var totalOz=calcTotalOz();
-  var pairs=[[1,2],[3,4],[5,6],[7,8]];
+  var q1_h=H4.map(function(h){return cmToM3h(V['s3_ton_min_h'+h]);});var q2_h=H4.map(function(h){return cmToM3h(V['s3_ton_max_h'+h]);});
   html+='<div class="db-sec"><div class="db-sec-hdr"><svg width="28" height="28" viewBox="0 0 28 28"><path d="M3 25L14 5L25 25Z" fill="#76C810"/><path d="M9 25L14 12L19 25Z" fill="#00493C"/><rect x="12" y="17" width="4" height="8" rx="2" fill="#CCF895"/></svg><span class="db-sec-title">Sección 3 · Precipitación (Merrill-Crowe)</span></div><div class="db-sec-body">';
-  html+='<div style="background:var(--md);border-radius:10px;padding:12px;margin-bottom:4px"><div style="font-size:11px;color:var(--mlt);margin-bottom:8px;font-weight:700">CAUDAL POR CORTE (Q_H1+Q_H2, etc.)</div><div style="display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:8px">';
-  H4.forEach(function(hh,idx){
-    var q1=cmToM3h(V['s3_ton_h'+pairs[idx][0]]),q2=cmToM3h(V['s3_ton_h'+pairs[idx][1]]);
-    var qSum=(q1?+q1:0)+(q2?+q2:0);
-    html+='<div style="background:rgba(255,255,255,0.1);border-radius:6px;padding:8px;text-align:center"><div style="font-size:10px;color:var(--mlt)">H'+hh+'</div><div style="font-size:14px;font-weight:700;color:var(--ml)">'+(q1||q2?qSum.toFixed(1):'—')+'</div><div style="font-size:9px;color:rgba(255,255,255,0.5)">'+(q1||'—')+'+'+( q2||'—')+'</div></div>';
-  });
+  html+='<div style="background:var(--md);border-radius:10px;padding:12px;margin-bottom:4px"><div style="font-size:11px;color:var(--mlt);margin-bottom:8px;font-weight:700">CAUDAL POR CORTE (m³/h)</div><div style="display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:8px">';
+  H4.forEach(function(hh,i){var qi=q1_h[i],qa=q2_h[i];html+='<div style="background:rgba(255,255,255,0.1);border-radius:6px;padding:8px;text-align:center"><div style="font-size:10px;color:var(--mlt)">H'+hh+'</div><div style="font-size:14px;font-weight:700;color:var(--ml)">'+(qi&&qa?((+qi+ +qa)/2).toFixed(1):'—')+'</div><div style="font-size:9px;color:rgba(255,255,255,0.5)">'+(qi||'—')+' / '+(qa||'—')+'</div></div>';});
   html+='</div></div>';
   html+='<div><div class="db-ct">Onzas Precipitadas Acumuladas por Corte (oz)</div><div class="db-cw sm"><canvas id="ch-oz"></canvas></div></div>';
   html+='<div><div class="db-ct">Ley de Soluciones por Corte (g/tm) — eje dual</div><div class="db-cw"><canvas id="ch-pregbarr"></canvas></div></div>';
@@ -971,6 +1008,20 @@ function renderDashboard(){
   html+='<div><div class="db-ct">Turbidez Filtros (NTU) — eje dual</div><div class="db-cw sm"><canvas id="ch-turb"></canvas></div></div>';
   html+='<div style="font-size:10px;color:var(--mu);margin-top:-8px;padding:0 4px;margin-bottom:8px">Eje izq: Entrada · Eje der: Salida (escalas independientes)</div>';
   html+='<div><div class="db-ct">O2 Cono Precipitación (ppm)</div><div class="db-cw sm"><canvas id="ch-o2cono"></canvas></div></div>';
+  // AUDITORÍA: Flujómetro vs Vertedero
+  var flujData=calcOzasFluj();
+  var totalFluj=calcTotalOzFluj();
+  html+='<div style="background:var(--su2);border:2px solid #7C3AED;border-radius:10px;padding:14px;margin-top:4px"><div class="db-ct" style="color:#5B21B6;margin-bottom:10px">⚖ Auditoría: Vertedero vs Flujómetro</div>';
+  html+='<div style="display:flex;gap:16px;margin-bottom:12px;flex-wrap:wrap"><div style="flex:1;min-width:120px;background:var(--sur);border:1px solid var(--bdr);border-radius:8px;padding:10px;text-align:center"><div style="font-size:10px;color:var(--mu)">Total Vertedero</div><div style="font-size:24px;font-weight:700;color:var(--md)">'+(totalOz!==null?totalOz:'—')+' <span style="font-size:12px">oz</span></div></div>';
+  html+='<div style="flex:1;min-width:120px;background:var(--sur);border:1px solid #7C3AED;border-radius:8px;padding:10px;text-align:center"><div style="font-size:10px;color:#7C3AED">Total Flujómetro</div><div style="font-size:24px;font-weight:700;color:#5B21B6">'+(totalFluj!==null?totalFluj:'—')+' <span style="font-size:12px">oz</span></div></div></div>';
+  html+='<div style="overflow-x:auto"><table class="hmap"><thead><tr><th class="rl">Corte</th>'+H4.map(function(h){return'<th>H'+h+'</th>';}).join('')+'</tr></thead><tbody>';
+  html+='<tr><td class="rl" style="padding:4px 8px;font-size:11px;background:var(--su2);font-weight:700;border-right:2px solid var(--bd2)">Δ Vol (m³)</td>';
+  H4.forEach(function(hh){var d=flujData.deltas['h'+hh];html+='<td style="font-size:11px;font-weight:700;text-align:center;border:1px solid var(--bdr)">'+(d!==undefined?d:'·')+'</td>';});
+  html+='</tr><tr><td class="rl" style="padding:4px 8px;font-size:11px;background:var(--su2);font-weight:700;border-right:2px solid var(--bd2)">Oz Vertedero</td>';
+  H4.forEach(function(hh){var v=ozData.porCorte['h'+hh];html+='<td style="font-size:11px;font-weight:700;text-align:center;border:1px solid var(--bdr);color:var(--md)">'+(v!==undefined?v:'·')+'</td>';});
+  html+='</tr><tr><td class="rl" style="padding:4px 8px;font-size:11px;background:var(--su2);font-weight:700;border-right:2px solid var(--bd2)">Oz Flujómetro</td>';
+  H4.forEach(function(hh){var v=flujData.porCorte['h'+hh];html+='<td style="font-size:11px;font-weight:700;text-align:center;border:1px solid var(--bdr);color:#5B21B6">'+(v!==undefined?v:'·')+'</td>';});
+  html+='</tr></tbody></table></div></div>';
   html+='</div></div><div style="height:16px"></div></div>';
 
   document.getElementById('db-body').innerHTML=html;
@@ -982,13 +1033,13 @@ function renderDashboard(){
     mkBar('ch-cgcn',hl,[{label:'CN Libre (lb/tm)',data:getH('cg_cn',H8),backgroundColor:'rgba(180,83,9,0.7)',borderColor:'#B45309',borderWidth:1}],0,null);
     mkBar('ch-ph',hl,[{label:'Esp. 1A',data:getH('phm_e1a',H8),backgroundColor:'rgba(0,73,60,0.7)',borderColor:CLR.md,borderWidth:1},{label:'Esp. 1B',data:getH('phm_e1b',H8),backgroundColor:'rgba(118,200,16,0.6)',borderColor:CLR.ml,borderWidth:1},{label:'Molino P.',data:getH('phm_mp',H8),backgroundColor:'rgba(35,207,125,0.6)',borderColor:CLR.mm,borderWidth:1},{label:'Clas.',data:getH('phm_ch',H8),backgroundColor:'rgba(180,83,9,0.5)',borderColor:'#B45309',borderWidth:1}],9,13);
     mkBar('ch-alim',h4l,[{label:'% Sól. Alimento Ciclones',data:getH('alim_sol',H4),backgroundColor:'rgba(91,33,182,0.7)',borderColor:'#5B21B6',borderWidth:1}],0,100);
-    mkBar('ch-esp',h4l,[{label:'Esp 1A',data:getH('esp1a_sol',H4),backgroundColor:'rgba(0,73,60,0.7)',borderColor:CLR.md,borderWidth:1},{label:'Esp 1B',data:getH('esp1b_sol',H4),backgroundColor:'rgba(118,200,16,0.6)',borderColor:CLR.ml,borderWidth:1},{label:'Esp 3B',data:getH('esp3b_sol',H4),backgroundColor:'rgba(35,207,125,0.6)',borderColor:CLR.mm,borderWidth:1},{label:'Esp 8',data:getH('esp8_sol',H4),backgroundColor:'rgba(180,83,9,0.6)',borderColor:'#B45309',borderWidth:1},{label:'Esp 9',data:getH('esp9_sol',H4),backgroundColor:'rgba(124,58,237,0.6)',borderColor:'#7C3AED',borderWidth:1}],40,65);
+    mkBar('ch-esp',hl,[{label:'Esp 1A',data:getH('esp1a_sol',H8),backgroundColor:'rgba(0,73,60,0.7)',borderColor:CLR.md,borderWidth:1},{label:'Esp 1B',data:getH('esp1b_sol',H8),backgroundColor:'rgba(118,200,16,0.6)',borderColor:CLR.ml,borderWidth:1},{label:'Esp 3B',data:getH('esp3b_sol',H8),backgroundColor:'rgba(35,207,125,0.6)',borderColor:CLR.mm,borderWidth:1},{label:'Esp 8',data:getH('esp8_sol',H8),backgroundColor:'rgba(180,83,9,0.6)',borderColor:'#B45309',borderWidth:1},{label:'Esp 9',data:getH('esp9_sol',H8),backgroundColor:'rgba(124,58,237,0.6)',borderColor:'#7C3AED',borderWidth:1}],40,65);
     mkBar('ch-ag0cn',h4l,[{label:'CN Libre Ag0 (lb/tm)',data:getH('ag0_cn',H4),backgroundColor:'rgba(180,83,9,0.7)',borderColor:'#B45309',borderWidth:1}],0,7);
     mkBar('ch-ag12',h4l,[{label:'Ag1 O2',data:getH('ag1_o2',H4),backgroundColor:'rgba(118,200,16,0.7)',borderColor:CLR.ml,borderWidth:1},{label:'Ag2 O2',data:getH('ag2_o2',H4),backgroundColor:'rgba(35,207,125,0.6)',borderColor:CLR.mm,borderWidth:1}],0,18);
     var ozAcumArr=H4.map(function(h){return ozData.acum['h'+h]||null;});
     mkBar('ch-oz',h4l,[{label:'Onzas acumuladas (oz)',data:ozAcumArr,backgroundColor:'rgba(118,200,16,0.7)',borderColor:CLR.ml,borderWidth:1}],0,null);
     mkDual('ch-pregbarr',h4l,getH('s3_pregC',H4),getH('s3_barC',H4),'Pregnant (g/tm)','Barren (g/tm)',CLR.md,CLR.rd);
-    mkDual('ch-turb',hl,getH('s3_turb_in',H8),getH('s3_turb_out',H8),'Entrada NTU','Salida NTU',CLR.md,CLR.ml);
+    mkDual('ch-turb',h4l,getH('s3_turb_in',H4),getH('s3_turb_out',H4),'Entrada NTU','Salida NTU',CLR.md,CLR.ml);
     mkBar('ch-o2cono',h4l,[{label:'10cm',data:getH('s3_o2_10',H4),backgroundColor:'rgba(0,73,60,0.7)',borderColor:CLR.md,borderWidth:1},{label:'25cm',data:getH('s3_o2_25',H4),backgroundColor:'rgba(118,200,16,0.6)',borderColor:CLR.ml,borderWidth:1},{label:'50cm',data:getH('s3_o2_50',H4),backgroundColor:'rgba(35,207,125,0.5)',borderColor:CLR.mm,borderWidth:1},{label:'Vert.',data:getH('s3_o2_vert',H4),backgroundColor:'rgba(180,83,9,0.6)',borderColor:'#B45309',borderWidth:1}],0,15);
   },120);
 }
@@ -1011,17 +1062,18 @@ function exportHTML(){
   function mkTbl(title,rows,hrs){var h='<div style="margin-bottom:18px"><div style="font-size:12px;font-weight:700;color:#00493C;padding:7px 12px;background:#EBF2E4;border-left:4px solid #76C810;margin-bottom:8px">'+title+'</div><div style="overflow-x:auto"><table style="border-collapse:collapse;width:100%;min-width:300px"><thead><tr>'+hdrC('Parámetro')+hdrC('Un.')+hrs.map(function(h){return hdrC('H'+h);}).join('')+'</tr></thead><tbody>';rows.forEach(function(r){h+='<tr>'+lblC(r.lbl)+'<td style="background:#EBF2E4;color:#5A7E6A;padding:5px 8px;font-size:11px;border:1px solid #C8DCBA;text-align:center">'+r.unit+'</td>'+hrs.map(function(hh){return tCell(V[r.key+'_h'+hh],r.fn,r.unit);}).join('')+'</tr>';});h+='</tbody></table></div></div>';return h;}
   function mkSingleVals(title,items){var h='<div style="margin-bottom:18px"><div style="font-size:12px;font-weight:700;color:#00493C;padding:7px 12px;background:#EBF2E4;border-left:4px solid #76C810;margin-bottom:8px">'+title+'</div><div style="display:flex;flex-wrap:wrap;gap:8px">';items.forEach(function(it){var v=V[it.key]||'',s=it.fn(v);h+='<div style="background:'+sBg(s)+';border:1px solid #C8DCBA;border-radius:8px;padding:10px 14px;min-width:120px"><div style="font-size:10px;color:#5A7E6A;margin-bottom:4px">'+it.lbl+'</div><div style="font-size:18px;font-weight:700;color:'+sColor(s)+'">'+(v||'—')+'</div><div style="font-size:10px;color:#5A7E6A">'+it.unit+'</div></div>';});h+='</div></div>';return h;}
 
-  function arr(rid,hrs){return JSON.stringify(hrs.map(function(h){var v=V[rid+'_h'+h]||'';if(isExCode(v))return null;var n=parseFloat(v);return isNaN(n)?null:n;}));}
-  // suggestedMax dinámico para gráficas duales
-  function dualMax(rid,hrs){var vals=hrs.map(function(h){var v=V[rid+'_h'+h]||'';if(isExCode(v))return NaN;return parseFloat(v);}).filter(function(v){return!isNaN(v);});return vals.length>0?(Math.max.apply(null,vals)*1.2).toFixed(3):null;}
+  function arr(rid,hrs){return JSON.stringify(hrs.map(function(h){var v=parseFloat(V[rid+'_h'+h]);return isNaN(v)?null:v;}));}
+  // FIX #3: suggestedMax dinámico para gráficas duales en el export
+  function dualMax(rid,hrs){var vals=hrs.map(function(h){return parseFloat(V[rid+'_h'+h]);}).filter(function(v){return!isNaN(v);});return vals.length>0?(Math.max.apply(null,vals)*1.2).toFixed(3):null;}
   var h4l=JSON.stringify(H4.map(function(h){return'H'+h;}));var h8l=JSON.stringify(H8.map(function(h){return'H'+h;}));
+  // FIX #2: usar ozData.acum (mismo cálculo que renderDashboard)
   var ozArr=JSON.stringify(H4.map(function(h){return ozData.acum['h'+h]||null;}));
   var recArr=JSON.stringify(H4.map(function(h){return recData.cortes['h'+h]?+recData.cortes['h'+h]:null;}));
   var mPregC=dualMax('s3_pregC',H4),mBarrC=dualMax('s3_barC',H4);
-  var mTurbIn=dualMax('s3_turb_in',H8),mTurbOut=dualMax('s3_turb_out',H8);
+  var mTurbIn=dualMax('s3_turb_in',H4),mTurbOut=dualMax('s3_turb_out',H4);
 
   // FIX #3: top:40, suggestedMax dinámico; d() ahora recibe mx1,mx2
-  var chartScript='<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"><\/script><script src="https://cdnjs.cloudflare.com/ajax/libs/chartjs-plugin-datalabels/2.2.0/chartjs-plugin-datalabels.min.js"><\/script><script>window.addEventListener("load",function(){if(typeof ChartDataLabels!=="undefined")Chart.register(ChartDataLabels);var b=function(id,lbs,ds,yMn,yMx){var el=document.getElementById(id);if(!el)return;new Chart(el,{type:"bar",data:{labels:lbs,datasets:ds},options:{responsive:true,maintainAspectRatio:false,layout:{padding:{top:40}},plugins:{legend:{labels:{font:{size:10},boxWidth:10}},datalabels:{display:true,anchor:"end",align:"top",offset:2,font:{size:9,weight:"bold"},formatter:function(v){return v===null?"":v;},color:"#333"}},scales:{x:{ticks:{font:{size:10}}},y:{min:yMn!=null?yMn:undefined,suggestedMax:yMx?yMx:undefined,ticks:{font:{size:10}}}}},plugins:[ChartDataLabels]});};var d=function(id,lbs,d1,d2,l1,l2,c1,c2,mx1,mx2){var el=document.getElementById(id);if(!el)return;new Chart(el,{type:"bar",data:{labels:lbs,datasets:[{label:l1,data:d1,backgroundColor:c1+"99",borderColor:c1,borderWidth:1,yAxisID:"y"},{label:l2,data:d2,backgroundColor:c2+"99",borderColor:c2,borderWidth:1,yAxisID:"y1"}]},options:{responsive:true,maintainAspectRatio:false,layout:{padding:{top:40}},plugins:{legend:{labels:{font:{size:10},boxWidth:10}},datalabels:{display:true,anchor:"end",align:"top",offset:2,font:{size:9,weight:"bold"},formatter:function(v){return v===null?"":v;}}},scales:{x:{ticks:{font:{size:10}}},y:{type:"linear",position:"left",title:{display:true,text:l1,font:{size:9}},suggestedMax:mx1||undefined,ticks:{font:{size:9}}},y1:{type:"linear",position:"right",title:{display:true,text:l2,font:{size:9}},suggestedMax:mx2||undefined,grid:{drawOnChartArea:false},ticks:{font:{size:9}}}}},plugins:[ChartDataLabels]});};b("ec-cgsp",'+h8l+',[{label:"% Sólidos",data:'+arr('cg_sol',H8)+',backgroundColor:"rgba(0,73,60,0.7)",borderColor:"#00493C",borderWidth:1},{label:"M200 %",data:'+arr('cg_pas',H8)+',backgroundColor:"rgba(118,200,16,0.6)",borderColor:"#76C810",borderWidth:1}],0,100);b("ec-cgcn",'+h8l+',[{label:"CN Libre (lb/tm)",data:'+arr('cg_cn',H8)+',backgroundColor:"rgba(180,83,9,0.7)",borderColor:"#B45309",borderWidth:1}],0,null);b("ec-alim",'+h4l+',[{label:"% Sól. Alimento Ciclones",data:'+arr('alim_sol',H4)+',backgroundColor:"rgba(91,33,182,0.7)",borderColor:"#5B21B6",borderWidth:1}],0,100);b("ec-esp",'+h4l+',[{label:"Esp 1A",data:'+arr('esp1a_sol',H4)+',backgroundColor:"rgba(0,73,60,0.7)",borderColor:"#00493C",borderWidth:1},{label:"Esp 1B",data:'+arr('esp1b_sol',H4)+',backgroundColor:"rgba(118,200,16,0.6)",borderColor:"#76C810",borderWidth:1},{label:"Esp 8",data:'+arr('esp8_sol',H4)+',backgroundColor:"rgba(180,83,9,0.6)",borderColor:"#B45309",borderWidth:1},{label:"Esp 9",data:'+arr('esp9_sol',H4)+',backgroundColor:"rgba(124,58,237,0.6)",borderColor:"#7C3AED",borderWidth:1}],40,65);b("ec-ag0cn",'+h4l+',[{label:"CN Libre Ag0 (lb/tm)",data:'+arr('ag0_cn',H4)+',backgroundColor:"rgba(180,83,9,0.7)",borderColor:"#B45309",borderWidth:1}],0,null);b("ec-oz",'+h4l+',[{label:"Onzas acumuladas (oz)",data:'+ozArr+',backgroundColor:"rgba(118,200,16,0.7)",borderColor:"#76C810",borderWidth:1}],0,null);d("ec-pregbarr",'+h4l+','+arr('s3_pregC',H4)+','+arr('s3_barC',H4)+',"Pregnant (g/tm)","Barren (g/tm)","#00493C","#B91C1C",'+mPregC+','+mBarrC+');d("ec-turb",'+h8l+','+arr('s3_turb_in',H8)+','+arr('s3_turb_out',H8)+',"Entrada NTU","Salida NTU","#00493C","#76C810",'+mTurbIn+','+mTurbOut+');b("ec-recup",'+h4l+',[{label:"Recuperación %",data:'+recArr+',backgroundColor:"rgba(118,200,16,0.7)",borderColor:"#76C810",borderWidth:1}],70,100);});<\/script>';
+  var chartScript='<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"><\/script><script src="https://cdnjs.cloudflare.com/ajax/libs/chartjs-plugin-datalabels/2.2.0/chartjs-plugin-datalabels.min.js"><\/script><script>window.addEventListener("load",function(){if(typeof ChartDataLabels!=="undefined")Chart.register(ChartDataLabels);var b=function(id,lbs,ds,yMn,yMx){var el=document.getElementById(id);if(!el)return;new Chart(el,{type:"bar",data:{labels:lbs,datasets:ds},options:{responsive:true,maintainAspectRatio:false,layout:{padding:{top:40}},plugins:{legend:{labels:{font:{size:10},boxWidth:10}},datalabels:{display:true,anchor:"end",align:"top",offset:2,font:{size:9,weight:"bold"},formatter:function(v){return v===null?"":v;},color:"#333"}},scales:{x:{ticks:{font:{size:10}}},y:{min:yMn!=null?yMn:undefined,suggestedMax:yMx?yMx:undefined,ticks:{font:{size:10}}}}},plugins:[ChartDataLabels]});};var d=function(id,lbs,d1,d2,l1,l2,c1,c2,mx1,mx2){var el=document.getElementById(id);if(!el)return;new Chart(el,{type:"bar",data:{labels:lbs,datasets:[{label:l1,data:d1,backgroundColor:c1+"99",borderColor:c1,borderWidth:1,yAxisID:"y"},{label:l2,data:d2,backgroundColor:c2+"99",borderColor:c2,borderWidth:1,yAxisID:"y1"}]},options:{responsive:true,maintainAspectRatio:false,layout:{padding:{top:40}},plugins:{legend:{labels:{font:{size:10},boxWidth:10}},datalabels:{display:true,anchor:"end",align:"top",offset:2,font:{size:9,weight:"bold"},formatter:function(v){return v===null?"":v;}}},scales:{x:{ticks:{font:{size:10}}},y:{type:"linear",position:"left",title:{display:true,text:l1,font:{size:9}},suggestedMax:mx1||undefined,ticks:{font:{size:9}}},y1:{type:"linear",position:"right",title:{display:true,text:l2,font:{size:9}},suggestedMax:mx2||undefined,grid:{drawOnChartArea:false},ticks:{font:{size:9}}}}},plugins:[ChartDataLabels]});};b("ec-cgsp",'+h8l+',[{label:"% Sólidos",data:'+arr('cg_sol',H8)+',backgroundColor:"rgba(0,73,60,0.7)",borderColor:"#00493C",borderWidth:1},{label:"M200 %",data:'+arr('cg_pas',H8)+',backgroundColor:"rgba(118,200,16,0.6)",borderColor:"#76C810",borderWidth:1}],0,100);b("ec-cgcn",'+h8l+',[{label:"CN Libre (lb/tm)",data:'+arr('cg_cn',H8)+',backgroundColor:"rgba(180,83,9,0.7)",borderColor:"#B45309",borderWidth:1}],0,null);b("ec-alim",'+h4l+',[{label:"% Sól. Alimento Ciclones",data:'+arr('alim_sol',H4)+',backgroundColor:"rgba(91,33,182,0.7)",borderColor:"#5B21B6",borderWidth:1}],0,100);b("ec-esp",'+h8l+',[{label:"Esp 1A",data:'+arr('esp1a_sol',H8)+',backgroundColor:"rgba(0,73,60,0.7)",borderColor:"#00493C",borderWidth:1},{label:"Esp 1B",data:'+arr('esp1b_sol',H8)+',backgroundColor:"rgba(118,200,16,0.6)",borderColor:"#76C810",borderWidth:1},{label:"Esp 8",data:'+arr('esp8_sol',H8)+',backgroundColor:"rgba(180,83,9,0.6)",borderColor:"#B45309",borderWidth:1},{label:"Esp 9",data:'+arr('esp9_sol',H8)+',backgroundColor:"rgba(124,58,237,0.6)",borderColor:"#7C3AED",borderWidth:1}],40,65);b("ec-ag0cn",'+h4l+',[{label:"CN Libre Ag0 (lb/tm)",data:'+arr('ag0_cn',H4)+',backgroundColor:"rgba(180,83,9,0.7)",borderColor:"#B45309",borderWidth:1}],0,null);b("ec-oz",'+h4l+',[{label:"Onzas acumuladas (oz)",data:'+ozArr+',backgroundColor:"rgba(118,200,16,0.7)",borderColor:"#76C810",borderWidth:1}],0,null);d("ec-pregbarr",'+h4l+','+arr('s3_pregC',H4)+','+arr('s3_barC',H4)+',"Pregnant (g/tm)","Barren (g/tm)","#00493C","#B91C1C",'+mPregC+','+mBarrC+');d("ec-turb",'+h4l+','+arr('s3_turb_in',H4)+','+arr('s3_turb_out',H4)+',"Entrada NTU","Salida NTU","#00493C","#76C810",'+mTurbIn+','+mTurbOut+');b("ec-recup",'+h4l+',[{label:"Recuperación %",data:'+recArr+',backgroundColor:"rgba(118,200,16,0.7)",borderColor:"#76C810",borderWidth:1}],70,100);});<\/script>';
 
   var body='<!DOCTYPE html><html lang="es"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1.0"><title>Reporte HEMCO · '+now.toLocaleDateString('es-NI')+'</title>'+chartScript+'<style>*{box-sizing:border-box;margin:0;padding:0}body{font-family:system-ui,-apple-system,sans-serif;background:#F4F7F0;color:#0D2B24;font-size:14px;padding:16px}@media(max-width:480px){body{padding:10px}}.sec{background:#fff;border-radius:12px;overflow:hidden;border:1px solid #C8DCBA;margin-bottom:18px}.sh{background:#00493C;color:#fff;padding:10px 16px;font-size:13px;font-weight:700}.sb2{padding:14px}.cw{position:relative;height:180px;margin-bottom:16px}</style></head><body>';
   body+='<div style="background:#00493C;border-radius:12px;padding:16px;margin-bottom:16px"><div style="font-size:16px;font-weight:700;color:#fff">HEMCO · Reporte de Turno</div><div style="font-size:12px;color:#CCF895;margin-top:4px">'+userName+' · '+userRole+' · Turno '+userShift+'</div><div style="font-size:11px;color:#A8C490;margin-top:2px">'+now.toLocaleDateString('es-NI',{weekday:'long',year:'numeric',month:'long',day:'numeric'})+' · '+now.toLocaleTimeString('es-NI',{hour:'2-digit',minute:'2-digit'})+'</div></div>';
@@ -1030,6 +1082,9 @@ function exportHTML(){
   function hKpi(lbl,v,fn,unit){var s=fn(v||'');var clr=s==='ok'?'#76C810':s==='warn'?'#FCD34D':s==='bad'?'#FCA5A5':'rgba(255,255,255,0.3)';return '<div style="background:rgba(255,255,255,0.1);border:1px solid rgba(255,255,255,0.15);border-radius:8px;padding:10px 8px"><div style="font-size:10px;color:rgba(255,255,255,0.65);margin-bottom:4px">'+lbl+'</div><div style="font-size:24px;font-weight:700;color:'+clr+'">'+(v||'—')+'</div><div style="font-size:10px;color:rgba(255,255,255,0.5)">'+unit+'</div></div>';}
 
   body+='<div style="background:#00493C;border-radius:12px;padding:16px;margin-bottom:18px"><div style="font-size:11px;font-weight:700;color:#CCF895;letter-spacing:.5px;text-transform:uppercase;margin-bottom:12px">◆ Parámetros Críticos</div><div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:10px">'+hKpi('% M200 · Ag0',ag0M200!==null?String(ag0M200):'',sAg0M200,'%')+hKpi('% Sólidos · Ag0',ag0Sol!==null?String(ag0Sol):'',sAg6,'%')+hKpi('CN Libre · Ag0',ag0CN!==null?String(ag0CN):'',sAg0CN,'lb/tm')+hKpi('Pregnant Compósito',pregCLast!==null?String(pregCLast):'',sFree,'g/tm')+hKpi('Barren Compósito',barrCLast!==null?String(barrCLast):'',sBarren,'g/tm')+hKpi('Onzas Acumuladas',totalOz!==null?String(totalOz):'',sFree,'oz')+'</div>';
+  // CC en export (Bug #3)
+  var ccExp=calcCCvals();
+  body+='<div style="background:rgba(35,207,125,0.12);border:1.5px solid rgba(35,207,125,0.35);border-radius:8px;padding:12px;margin-top:12px;display:flex;gap:24px;flex-wrap:wrap"><div style="font-size:10px;color:#CCF895;font-weight:700;width:100%;text-transform:uppercase;letter-spacing:.3px;margin-bottom:4px">⟳ Carga Circulante</div><div><div style="font-size:10px;color:rgba(255,255,255,0.55)">Por % Sólidos</div><div style="font-size:24px;font-weight:700;color:'+(ccExp.sol!==null?'#76C810':'rgba(255,255,255,0.3)')+'">'+(ccExp.sol!==null?ccExp.sol+'%':'—')+'</div></div><div><div style="font-size:10px;color:rgba(255,255,255,0.55)">Por Malla 200</div><div style="font-size:24px;font-weight:700;color:'+(ccExp.mal!==null?'#76C810':'rgba(255,255,255,0.3)')+'">'+(ccExp.mal!==null?ccExp.mal+'%':'—')+'</div></div></div>';
   body+='<div style="background:rgba(118,200,16,0.12);border:1.5px solid #76C810;border-radius:8px;padding:12px;margin-top:12px"><div style="font-size:10px;color:#CCF895;font-weight:700;text-transform:uppercase;margin-bottom:8px">Onzas Acumuladas por Corte</div><div style="display:flex;gap:8px;flex-wrap:wrap">';
   H4.forEach(function(hh){var v=ozData.porCorte['h'+hh];body+='<div style="background:rgba(255,255,255,0.1);border-radius:6px;padding:6px 12px;text-align:center"><div style="font-size:10px;color:rgba(255,255,255,0.6)">H'+hh+'</div><div style="font-size:16px;font-weight:700;color:#76C810">'+(v!==undefined?v+'oz':'—')+'</div></div>';});
   body+='</div></div>';
@@ -1037,22 +1092,26 @@ function exportHTML(){
   H4.forEach(function(hh){var r=recData.cortes['h'+hh];body+='<span style="background:rgba(255,255,255,0.1);border-radius:4px;padding:2px 8px;font-size:11px;color:rgba(255,255,255,0.7)">H'+hh+': <b>'+(r||'—')+(r?'%':'')+'</b></span>';});
   body+='</div></div></div></div></div>';
 
-  body+='<div class="sec"><div class="sh">Sección 1 · Trituración y Molienda</div><div class="sb2">'+mkSingleVals('Granulometrías (% Pase 3/8")',[{key:'gr_1b',lbl:'Banda 1B',unit:'%',fn:sGran},{key:'gr_7',lbl:'Banda 7',unit:'%',fn:sGran},{key:'gr_13a',lbl:'Banda 13A',unit:'%',fn:sGran},{key:'gr_13b',lbl:'Banda 13B',unit:'%',fn:sGran}])+'<div style="font-size:12px;font-weight:700;color:#00493C;padding:7px 12px;background:#EBF2E4;border-left:4px solid #76C810;margin-bottom:8px">Caja General · H1–H8</div><div class="cw"><canvas id="ec-cgsp"></canvas></div><div style="font-size:12px;font-weight:700;color:#00493C;padding:7px 12px;background:#EBF2E4;border-left:4px solid #76C810;margin-bottom:8px">CN Libre · H1–H8 (lb/tm)</div><div class="cw"><canvas id="ec-cgcn"></canvas></div><div style="font-size:12px;font-weight:700;color:#00493C;padding:7px 12px;background:#EBF2E4;border-left:4px solid #76C810;margin-bottom:8px">% Sólidos Alimento Ciclones · H2,H4,H6,H8</div><div class="cw" style="height:140px"><canvas id="ec-alim"></canvas></div>'+mkTbl('Sólidos Molinos (H1–H8)',[{key:'mol_md1',lbl:'MD1 Secundario',unit:'%',fn:sSec},{key:'mol_md2',lbl:'MD2 Primario',unit:'%',fn:sPrim},{key:'mol_sep',lbl:'Sepro',unit:'%',fn:sSec},{key:'mol_m1',lbl:'Molino 1',unit:'%',fn:sSec},{key:'mol_m2',lbl:'Molino 2',unit:'%',fn:sSec},{key:'mol_m4',lbl:'Molino 4',unit:'%',fn:sSec},{key:'mol_m5',lbl:'Molino 5',unit:'%',fn:sSec}],H8)+mkTbl('Caja General (H1–H8)',[{key:'cg_sol',lbl:'% Sólidos',unit:'%',fn:sSol},{key:'cg_pas',lbl:'Pasante M200',unit:'%',fn:sPas},{key:'cg_cn',lbl:'CN Libre',unit:'lb/tm',fn:sCN},{key:'cg_ph',lbl:'pH',unit:'',fn:sPH}],H8)+'</div></div>';
-  body+='<div class="sec"><div class="sh">Sección 2 · Agitadores y Espesadores</div><div class="sb2"><div style="font-size:12px;font-weight:700;color:#00493C;padding:7px 12px;background:#EBF2E4;border-left:4px solid #76C810;margin-bottom:8px">% Sólidos Espesadores</div><div class="cw"><canvas id="ec-esp"></canvas></div>'+mkTbl('Agitador 0 · Parámetros Bihora (H2,H4,H6,H8)',[{key:'ag0_sol',lbl:'% Sólidos',unit:'%',fn:sAg6},{key:'ag0_m200',lbl:'% M200',unit:'%',fn:sAg0M200},{key:'ag0_afcn',lbl:'Aforación CN',unit:'s/L',fn:sFree},{key:'ag0_o2',lbl:'O2',unit:'ppm',fn:sAg0O2},{key:'ag0_ph',lbl:'pH',unit:'',fn:sAg0pH}],H4)+'<div style="font-size:12px;font-weight:700;color:#00493C;padding:7px 12px;background:#EBF2E4;border-left:4px solid #76C810;margin-bottom:8px">CN Libre Agitador 0 · H2,H4,H6,H8 (lb/tm)</div><div class="cw" style="height:130px"><canvas id="ec-ag0cn"></canvas></div>'+mkTbl('O2 Agitadores 1 y 2 (H2,H4,H6,H8)',[{key:'ag1_o2',lbl:'Agitador 1',unit:'ppm',fn:sAg0O2},{key:'ag2_o2',lbl:'Agitador 2',unit:'ppm',fn:sAg0O2}],H4)+mkTbl('Sedimentación Espesadores (H2,H4,H6,H8)',[{key:'esp1a_sed',lbl:'Esp. 1A',unit:'cm/s',fn:sFree},{key:'esp1b_sed',lbl:'Esp. 1B',unit:'cm/s',fn:sFree},{key:'esp3b_sed',lbl:'Esp. 3B',unit:'cm/s',fn:sFree}],H4)+mkTbl('Dosificación Reactivos (H1–H8)',[{key:'esp3b_pol',lbl:'Policloruro',unit:'ml/min',fn:sFree},{key:'s3_zinc',lbl:'Polvo de Zinc',unit:'g/min',fn:sFree},{key:'s3_cnlib',lbl:'CN Libre',unit:'lb/ft',fn:sFree},{key:'s3_cndos',lbl:'Dosis Cianuro',unit:'s/L',fn:sFree}],H8)+'</div></div>';
+  body+='<div class="sec"><div class="sh">Sección 1 · Trituración y Molienda</div><div class="sb2">'+mkSingleVals('Granulometrías (% Pase 3/8")',[{key:'gr_1b',lbl:'Banda 1B',unit:'%',fn:sGran},{key:'gr_7',lbl:'Banda 7',unit:'%',fn:sGran},{key:'gr_13a',lbl:'Banda 13A',unit:'%',fn:sGran},{key:'gr_13b',lbl:'Banda 13B',unit:'%',fn:sGran}])+'<div style="font-size:12px;font-weight:700;color:#00493C;padding:7px 12px;background:#EBF2E4;border-left:4px solid #76C810;margin-bottom:8px">Caja General · H1–H8</div><div class="cw"><canvas id="ec-cgsp"></canvas></div><div style="font-size:12px;font-weight:700;color:#00493C;padding:7px 12px;background:#EBF2E4;border-left:4px solid #76C810;margin-bottom:8px">CN Libre · H1–H8 (lb/tm)</div><div class="cw"><canvas id="ec-cgcn"></canvas></div><div style="font-size:12px;font-weight:700;color:#00493C;padding:7px 12px;background:#EBF2E4;border-left:4px solid #76C810;margin-bottom:8px">% Sólidos Alimento Ciclones · H2,H4,H6,H8</div><div class="cw" style="height:140px"><canvas id="ec-alim"></canvas></div>'+mkTbl('Sólidos Molinos (H1–H8)',[{key:'mol_md1',lbl:'MD1 Primario',unit:'%',fn:sPrim},{key:'mol_md2',lbl:'MD2 Primario',unit:'%',fn:sPrim},{key:'mol_sep',lbl:'Sepro',unit:'%',fn:sSec},{key:'mol_m1',lbl:'Molino 1',unit:'%',fn:sSec},{key:'mol_m2',lbl:'Molino 2',unit:'%',fn:sSec},{key:'mol_m4',lbl:'Molino 4',unit:'%',fn:sSec},{key:'mol_m5',lbl:'Molino 5',unit:'%',fn:sSec}],H8)+mkTbl('Caja General (H1–H8)',[{key:'cg_sol',lbl:'% Sólidos',unit:'%',fn:sSol},{key:'cg_pas',lbl:'Pasante M200',unit:'%',fn:sPas},{key:'cg_cn',lbl:'CN Libre',unit:'lb/tm',fn:sCN},{key:'cg_ph',lbl:'pH',unit:'',fn:sPH}],H8)+'</div></div>';
+  body+='<div class="sec"><div class="sh">Sección 2 · Agitadores y Espesadores</div><div class="sb2"><div style="font-size:12px;font-weight:700;color:#00493C;padding:7px 12px;background:#EBF2E4;border-left:4px solid #76C810;margin-bottom:8px">% Sólidos Espesadores</div><div class="cw"><canvas id="ec-esp"></canvas></div>'+mkTbl('Agitador 0 · Parámetros Bihora (H2,H4,H6,H8)',[{key:'ag0_sol',lbl:'% Sólidos',unit:'%',fn:sAg6},{key:'ag0_m200',lbl:'% M200',unit:'%',fn:sAg0M200},{key:'ag0_afcn',lbl:'Aforación CN',unit:'s/L',fn:sFree},{key:'ag0_o2',lbl:'O2',unit:'ppm',fn:sAg0O2},{key:'ag0_ph',lbl:'pH',unit:'',fn:sAg0pH}],H4)+'<div style="font-size:12px;font-weight:700;color:#00493C;padding:7px 12px;background:#EBF2E4;border-left:4px solid #76C810;margin-bottom:8px">CN Libre Agitador 0 · H2,H4,H6,H8 (lb/tm)</div><div class="cw" style="height:130px"><canvas id="ec-ag0cn"></canvas></div>'+mkTbl('O2 Agitadores 1 y 2 (H2,H4,H6,H8)',[{key:'ag1_o2',lbl:'Agitador 1',unit:'ppm',fn:sAg0O2},{key:'ag2_o2',lbl:'Agitador 2',unit:'ppm',fn:sAg0O2}],H4)+mkTbl('Sedimentación Espesadores (H2,H4,H6,H8)',[{key:'esp1a_sed',lbl:'Esp. 1A',unit:'cm/s',fn:sFree},{key:'esp1b_sed',lbl:'Esp. 1B',unit:'cm/s',fn:sFree},{key:'esp3b_sed',lbl:'Esp. 3B',unit:'cm/s',fn:sFree}],H4)+mkTbl('Dosificación Reactivos (H2,H4,H6,H8)',[{key:'esp3b_pol',lbl:'Policloruro',unit:'ml/min',fn:sFree},{key:'s3_zinc',lbl:'Polvo de Zinc',unit:'g/min',fn:sFree},{key:'s3_cnlib',lbl:'CN Libre',unit:'lb/ft',fn:sFree},{key:'s3_cndos',lbl:'Dosis Cianuro',unit:'s/L',fn:sFree}],H4)+'</div></div>';
   body+='<div class="sec"><div class="sh">Sección 3 · Precipitación (Merrill-Crowe)</div><div class="sb2"><div style="display:flex;gap:10px;margin-bottom:16px;flex-wrap:wrap">';
-  var expPairs=[[1,2],[3,4],[5,6],[7,8]];
-  H4.forEach(function(hh,idx){
-    var q1=cmToM3h(V['s3_ton_h'+expPairs[idx][0]]),q2=cmToM3h(V['s3_ton_h'+expPairs[idx][1]]);
-    var qSum=(q1?+q1:0)+(q2?+q2:0);
-    body+='<div style="background:#00493C;border-radius:8px;padding:10px 14px;min-width:100px"><div style="font-size:11px;color:#CCF895">H'+hh+'</div><div style="font-size:14px;font-weight:700;color:#76C810">'+(q1||q2?qSum.toFixed(1):'—')+'</div><div style="font-size:10px;color:#A8C490">m³ por corte</div></div>';
-  });
+  H4.forEach(function(hh){var mn=V['s3_ton_min_h'+hh]||'',mx=V['s3_ton_max_h'+hh]||'';var q1=cmToM3h(mn),q2=cmToM3h(mx);body+='<div style="background:#00493C;border-radius:8px;padding:10px 14px;min-width:100px"><div style="font-size:11px;color:#CCF895">H'+hh+'</div><div style="font-size:14px;font-weight:700;color:#76C810">'+(q1&&q2?((+q1+ +q2)/2).toFixed(1):'—')+'</div><div style="font-size:10px;color:#A8C490">m³/h prom</div></div>';});
   body+='</div><div style="font-size:12px;font-weight:700;color:#00493C;padding:7px 12px;background:#EBF2E4;border-left:4px solid #76C810;margin-bottom:8px">Onzas Precipitadas Acumuladas (oz)</div><div class="cw" style="height:140px"><canvas id="ec-oz"></canvas></div>';
   body+='<div style="font-size:12px;font-weight:700;color:#00493C;padding:7px 12px;background:#EBF2E4;border-left:4px solid #76C810;margin-bottom:4px">Ley Soluciones por Corte (g/tm) — Eje dual</div><div style="font-size:10px;color:#5A7E6A;padding:0 12px;margin-bottom:8px">Eje izq: Pregnant · Eje der: Barren (escalas independientes)</div><div class="cw"><canvas id="ec-pregbarr"></canvas></div>';
   body+='<div style="font-size:12px;font-weight:700;color:#00493C;padding:7px 12px;background:#EBF2E4;border-left:4px solid #76C810;margin-bottom:8px">Recuperación M-C por Corte (%)</div><div class="cw" style="height:140px"><canvas id="ec-recup"></canvas></div>';
   body+=mkTbl('Lab Químico (H2,H4,H6,H8)',[{key:'s3_pregE',lbl:'Pregnant Especial',unit:'g/tm',fn:sFree},{key:'s3_pregC',lbl:'Pregnant Compósito',unit:'g/tm',fn:sFree},{key:'s3_barC',lbl:'Barren Compósito',unit:'g/tm',fn:sBarren},{key:'s3_barE',lbl:'Barren Especial',unit:'g/tm',fn:sBarren},{key:'s3_esp8',lbl:'Espesador 8',unit:'g/tm',fn:sEspLab},{key:'s3_esp9',lbl:'Espesador 9',unit:'g/tm',fn:sEspLab}],H4);
   body+='<div style="font-size:12px;font-weight:700;color:#00493C;padding:7px 12px;background:#EBF2E4;border-left:4px solid #76C810;margin-bottom:4px">Turbidez Filtros (NTU) — Eje dual</div><div style="font-size:10px;color:#5A7E6A;padding:0 12px;margin-bottom:8px">Eje izq: Entrada · Eje der: Salida (escalas independientes)</div><div class="cw" style="height:130px"><canvas id="ec-turb"></canvas></div>';
-  body+=mkTbl('Dosificación Reactivos (H1–H8)',[{key:'s3_zinc',lbl:'Polvo de Zinc',unit:'g/min',fn:sFree},{key:'s3_cnlib',lbl:'Cianuro Libre',unit:'lb/ft',fn:sFree},{key:'s3_cndos',lbl:'Dosis Cianuro',unit:'s/L',fn:sFree}],H8);
+  body+=mkTbl('Dosificación Reactivos (H2,H4,H6,H8)',[{key:'s3_zinc',lbl:'Polvo de Zinc',unit:'g/min',fn:sFree},{key:'s3_cnlib',lbl:'Cianuro Libre',unit:'lb/ft',fn:sFree},{key:'s3_cndos',lbl:'Dosis Cianuro',unit:'s/L',fn:sFree}],H4);
   body+=mkTbl('Control de Presiones (H2,H4,H6,H8)',[{key:'s3_mic1',lbl:'Micronics 1',unit:'',fn:sFree},{key:'s3_mic2',lbl:'Micronics 2',unit:'',fn:sFree},{key:'s3_tvac',lbl:'Torre Vacío',unit:'',fn:sFree},{key:'s3_bvac',lbl:'Bomba Vacío',unit:'',fn:sFree},{key:'s3_bv1',lbl:'Bomba Vert. 1',unit:'',fn:sFree},{key:'s3_bv2',lbl:'Bomba Vert. 2',unit:'',fn:sFree},{key:'s3_bv3',lbl:'Bomba Vert. 3',unit:'',fn:sFree}],H4);
+  // Flujómetro en export
+  var flujExp=calcOzasFluj(),totalFlujExp=calcTotalOzFluj();
+  body+='<div style="margin-bottom:18px;border:2px solid #7C3AED;border-radius:10px;padding:14px;background:#F5F3FF"><div style="font-size:12px;font-weight:700;color:#5B21B6;padding:7px 12px;background:#EDE9FE;border-left:4px solid #7C3AED;margin-bottom:10px;border-radius:0 6px 6px 0">⚖ Auditoría: Vertedero vs Flujómetro</div>';
+  body+='<div style="display:flex;gap:16px;margin-bottom:12px;flex-wrap:wrap"><div style="flex:1;min-width:120px;background:#fff;border:1px solid #C8DCBA;border-radius:8px;padding:10px;text-align:center"><div style="font-size:10px;color:#5A7E6A">Total Vertedero</div><div style="font-size:22px;font-weight:700;color:#00493C">'+(totalOz||'—')+' oz</div></div><div style="flex:1;min-width:120px;background:#fff;border:1px solid #7C3AED;border-radius:8px;padding:10px;text-align:center"><div style="font-size:10px;color:#7C3AED">Total Flujómetro</div><div style="font-size:22px;font-weight:700;color:#5B21B6">'+(totalFlujExp||'—')+' oz</div></div></div>';
+  body+='<div style="overflow-x:auto"><table style="border-collapse:collapse;width:100%"><thead><tr><th style="background:#5B21B6;color:#fff;padding:6px 8px;text-align:left;font-size:11px;border:1px solid rgba(255,255,255,0.2)">Corte</th>'+H4.map(function(h){return'<th style="background:#5B21B6;color:#fff;padding:6px 8px;text-align:center;font-size:11px;border:1px solid rgba(255,255,255,0.2)">H'+h+'</th>';}).join('')+'</tr></thead><tbody>';
+  body+='<tr><td style="background:#EDE9FE;color:#1E4A38;padding:6px 8px;font-weight:700;font-size:12px;border:1px solid #C8DCBA">Δ Vol (m³)</td>'+H4.map(function(h){var d=flujExp.deltas['h'+h];return'<td style="padding:6px;text-align:center;border:1px solid #C8DCBA;font-weight:700;font-size:12px">'+(d!==undefined?d:'—')+'</td>';}).join('')+'</tr>';
+  body+='<tr><td style="background:#EDE9FE;color:#1E4A38;padding:6px 8px;font-weight:700;font-size:12px;border:1px solid #C8DCBA">Oz Vertedero</td>'+H4.map(function(h){var v=ozData.porCorte['h'+h];return'<td style="padding:6px;text-align:center;border:1px solid #C8DCBA;font-weight:700;font-size:12px;color:#00493C">'+(v!==undefined?v:'—')+'</td>';}).join('')+'</tr>';
+  body+='<tr><td style="background:#EDE9FE;color:#1E4A38;padding:6px 8px;font-weight:700;font-size:12px;border:1px solid #C8DCBA">Oz Flujómetro</td>'+H4.map(function(h){var v=flujExp.porCorte['h'+h];return'<td style="padding:6px;text-align:center;border:1px solid #C8DCBA;font-weight:700;font-size:12px;color:#5B21B6">'+(v!==undefined?v:'—')+'</td>';}).join('')+'</tr>';
+  body+='</tbody></table></div></div>';
   body+='</div></div>';
   body+='<div style="text-align:center;font-size:11px;color:#5A7E6A;padding:16px 0">HEMCO Nicaragua S.A. · Reporte generado el '+now.toLocaleString('es-NI')+'</div></body></html>';
 
@@ -1088,6 +1147,7 @@ window.abrirConfigModal=abrirConfigModal;
 window.guardarConfigModal=guardarConfigModal;
 window.cerrarConfigModal=cerrarConfigModal;
 window.resetCFG=resetCFG;
+window.updFlujDeltas=updFlujDeltas;
 // exportHTML se expone desde dashboard.js
 
 /* ═══ INIT ═══ */
