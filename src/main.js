@@ -82,6 +82,11 @@ function calcCCvals(){
 }
 
 /* ═══ ONZAS — caudal horario, pares de horas por corte ═══ */
+function avgQ(h){
+  var mn=cmToM3h(V['s3_ton_min_h'+h]),mx=cmToM3h(V['s3_ton_max_h'+h]);
+  if(mn&&mx)return(+mn+ +mx)/2;
+  return mn?+mn:(mx?+mx:null);
+}
 function calcOzasAcum(){
   var running=0, res={porCorte:{},acum:{}};
   var pairs=[[1,2],[3,4],[5,6],[7,8]];
@@ -89,8 +94,7 @@ function calcOzasAcum(){
     var pC=numOrNull(V['s3_pregC_h'+hh]);
     var bC=numOrNull(V['s3_barC_h'+hh]);
     var h1=pairs[idx][0], h2=pairs[idx][1];
-    var q1=cmToM3h(V['s3_ton_h'+h1]);
-    var q2=cmToM3h(V['s3_ton_h'+h2]);
+    var q1=avgQ(h1), q2=avgQ(h2);
     if(pC!==null&&bC!==null&&pC>=bC&&(q1||q2)){
       var qSum=(q1?+q1:0)+(q2?+q2:0);
       var oz=(pC-bC)*qSum/31.1035;
@@ -192,7 +196,7 @@ function mk(id,lbl,unit,fn,dis){
   var v=V[id]||'',s=fn(v);
   if(dis)return '<div class="fcard"><div class="flbl">'+lbl+'</div><div class="frow"><input type="text" class="fi" disabled placeholder="---"><span class="fu">'+unit+'</span></div></div>';
   return '<div class="fcard"><div class="flbl">'+lbl+'</div><div class="frow">'+
-    '<input type="text" class="fi '+s+'" id="fi-'+id+'" value="'+v+'" placeholder="---" inputmode="decimal" oninput="sv(\''+id+'\',this.value,\''+fn.name+'\')">'+
+    '<input type="text" class="fi '+s+'" id="fi-'+id+'" value="'+v+'" placeholder="---" oninput="sv(\''+id+'\',this.value,\''+fn.name+'\')">'+
     '<span class="fu">'+unit+'</span><div class="fdot '+s+'" id="fd-'+id+'"></div></div></div>';
 }
 function sv(id,v,fnName){
@@ -216,7 +220,7 @@ function hr(rid,lbl,unit,hrs,fn,step,ri,blk){
     else{
       var v=V[k]||'',s=fn(v);
       c+='<td class="'+(ic?'cur ':'')+s+'" id="td-'+k+'">'+
-        '<input type="text" inputmode="decimal" class="hi '+s+'" id="hgi-'+k+'" value="'+v+'" '+
+        '<input type="text" class="hi '+s+'" id="hgi-'+k+'" value="'+v+'" '+
         'onfocus="onGF(\''+rid+'\','+ri+','+j+')" '+
         'oninput="onCI(\''+k+'\',this.value,\''+fn.name+'\','+h+',\''+rid+'\','+ri+','+j+')">'+
         '</td>';
@@ -292,7 +296,7 @@ function rCic(){
   var h='<table class="ctbl"><thead><tr><th class="cl">Ciclón</th><th>Activo</th><th>Over %Sol</th><th>Over M200</th><th>Under %Sol</th><th>Under M200</th></tr></thead><tbody>';
   for(var c=1;c<=7;c++){var on=CA[c];
     h+='<tr><td class="cl">Ciclón #'+c+'</td><td><button class="tog '+(on?'on':'')+'" onclick="togC('+c+')">'+(on?'●':'○')+'</button></td>';
-    if(on){var ts=['os','om','us','um'];for(var ti=0;ti<ts.length;ti++){var k='cc_c'+c+'_'+ts[ti];h+='<td><input type="number" inputmode="decimal" class="hi" style="width:100%" value="'+(V[k]||'')+'" oninput="V[\''+k+'\']=this.value;calcCC()"></td>';}}
+    if(on){var ts=['os','om','us','um'];for(var ti=0;ti<ts.length;ti++){var k='cc_c'+c+'_'+ts[ti];h+='<td><input type="text" class="hi" style="width:100%" value="'+(V[k]||'')+'" oninput="V[\''+k+'\']=this.value;calcCC()"></td>';}}
     else{h+='<td class="ia" colspan="4">—</td>';}
     h+='</tr>';
   }
@@ -305,20 +309,21 @@ function updateTonDisplay(){
   var el=document.getElementById('ton-disp');if(!el)return;
   var rows='';
   H8.forEach(function(hh){
-    var cm=V['s3_ton_h'+hh]||'';
-    var q=(!isExCode(cm)&&cm)?cmToM3h(cm):null;
+    var mn=V['s3_ton_min_h'+hh]||'',mx=V['s3_ton_max_h'+hh]||'';
+    var qA=avgQ(hh);
+    var lbl=(isExCode(mn)||isExCode(mx))?'<b style="color:#64748B">'+(isExCode(mn)?mn:'')+(isExCode(mx)?' '+mx:'')+'</b>':(qA?mn+'/'+mx+' → <b>'+qA.toFixed(2)+' m³/h</b>':'—');
     rows+='<div style="display:flex;align-items:center;gap:10px;margin-top:4px">'+
       '<div style="width:28px;font-size:11px;color:var(--mlt)">H'+hh+'</div>'+
-      '<div style="flex:1"><div class="ton-w-lbl">'+(isExCode(cm)?'<b style="color:#64748B">'+cm+'</b>':(cm&&q?cm+' cm → <b>'+q+' m³/h</b>':'—'))+'</div></div></div>';
+      '<div style="flex:1"><div class="ton-w-lbl">'+lbl+'</div></div></div>';
   });
   var pairs=[[1,2],[3,4],[5,6],[7,8]];
   rows+='<div style="border-top:1px solid rgba(255,255,255,0.15);margin-top:8px;padding-top:6px;font-size:10px;color:var(--mlt);margin-bottom:4px">Suma por corte (Q_impar + Q_par)</div>';
   pairs.forEach(function(p,i){
-    var q1=cmToM3h(V['s3_ton_h'+p[0]]),q2=cmToM3h(V['s3_ton_h'+p[1]]);
+    var q1=avgQ(p[0]),q2=avgQ(p[1]);
     var s=(q1?+q1:0)+(q2?+q2:0);
     rows+='<div style="display:flex;gap:10px;margin-top:2px"><div style="width:28px;font-size:11px;color:var(--ml)">H'+H4[i]+'</div><div class="ton-w-val" style="font-size:15px">'+(q1||q2?s.toFixed(1)+' m³':'—')+'</div></div>';
   });
-  el.innerHTML='<div class="ton-w-lbl">Caudal horario · Suma por corte</div>'+rows;
+  el.innerHTML='<div class="ton-w-lbl">Caudal horario (prom mín/máx) · Vol. por corte</div>'+rows;
 }
 
 /* ═══ SECTION 1 ═══ */
@@ -368,7 +373,7 @@ function rPhCN(){
   var h='<div class="stitle">pH Tanques de Cianuro</div>'+gl('2 veces por turno')+'<div class="phgrid">';
   for(var t=1;t<=2;t++){h+='<div class="phtank"><div class="phttl">Tanque CN #'+t+'</div>';
     for(var r2=1;r2<=2;r2++){var kh='phcn_t'+t+'r'+r2+'_h',kv='phcn_t'+t+'r'+r2+'_v';
-      h+='<div class="phrow"><div class="phrl">Lectura '+r2+'</div><input type="time" class="tin" value="'+(V[kh]||'')+'" oninput="V[\''+kh+'\']=this.value"><input type="number" step="0.1" inputmode="decimal" placeholder="pH" class="phin" value="'+(V[kv]||'')+'" oninput="V[\''+kv+'\']=this.value"></div>';}
+      h+='<div class="phrow"><div class="phrl">Lectura '+r2+'</div><input type="time" class="tin" value="'+(V[kh]||'')+'" oninput="V[\''+kh+'\']=this.value"><input type="text" placeholder="pH" class="phin" value="'+(V[kv]||'')+'" oninput="V[\''+kv+'\']=this.value"></div>';}
     h+='</div>';}
   return h+'</div>';
 }
@@ -420,16 +425,17 @@ function rAg12(){
 /* ═══ SECTION 3 ═══ */
 function rS3lab(){
   regGrid('s3lab',[mkR('s3_pregE',H4),mkR('s3_pregC',H4),mkR('s3_barC',H4),mkR('s3_barE',H4),mkR('s3_esp8',H4),mkR('s3_esp9',H4)]);
-  regGrid('s3ton',[mkR('s3_ton_h',H8)]);
+  regGrid('s3ton',[mkR('s3_ton_min',H8),mkR('s3_ton_max',H8)]);
   var h='<div class="stitle">Lab Químico · Precipitación</div>'+gl('Soluciones','H2,H4,H6,H8 · g/tm')+
     '<div class="hwrap"><table class="hgrid"><thead><tr><th class="rl">Muestra</th><th>Un.</th>'+gHead(H4)+'</tr></thead><tbody>'+
     hr('s3_pregE','Pregnant Especial','g/tm',H4,sFree,'0.001',0)+hr('s3_pregC','Pregnant Compósito','g/tm',H4,sFree,'0.001',1)+
     hr('s3_barC','Barren Compósito','g/tm',H4,sBarren,'0.001',2)+hr('s3_barE','Barren Especial','g/tm',H4,sBarren,'0.001',3)+
     hr('s3_esp8','Espesador 8','g/tm',H4,sEspLab,'0.001',4)+hr('s3_esp9','Espesador 9','g/tm',H4,sEspLab,'0.001',5)+'</tbody></table></div>'+
-    gl('Tonelaje/Caudal Vertedero','H1–H8 · Lectura en cm')+
+    gl('Tonelaje/Caudal Vertedero','H1–H8 · Mín/Máx en cm')+
     '<div class="hwrap"><table class="hgrid"><thead><tr><th class="rl">Medición</th><th>Un.</th>'+gHead(H8)+'</tr></thead><tbody>'+
-    hr('s3_ton_h','Lectura (cm)','cm',H8,sFree,'any',0)+'</tbody></table></div>'+
-    '<div class="ton-widget" id="ton-disp"><div class="ton-w-lbl">Ingresa las lecturas para ver el caudal</div></div>';
+    hr('s3_ton_min','Lect. Mínima','cm',H8,sFree,'any',0)+
+    hr('s3_ton_max','Lect. Máxima','cm',H8,sFree,'any',1)+'</tbody></table></div>'+
+    '<div class="ton-widget" id="ton-disp"><div class="ton-w-lbl">Ingresa mín/máx para ver el caudal</div></div>';
   setTimeout(updateTonDisplay,80);return h;
 }
 function rS3dos(){
@@ -458,14 +464,14 @@ function rS3fluj(){
   var h0=V['fluj_h0']||'';
   var h='<div class="stitle">Flujómetro Cono de Zinc</div>'+
     gl('Lectura Inicial (turno anterior)')+'<div class="fgrid"><div class="fcard"><div class="flbl">Lectura H0 (m³)</div><div class="frow">'+
-    '<input type="number" class="fi" id="fi-fluj_h0" value="'+h0+'" placeholder="---" inputmode="decimal" step="0.01" oninput="V[\'fluj_h0\']=this.value;updFlujDeltas();programarSyncNube()">'+
+    '<input type="number" class="fi" id="fi-fluj_h0" value="'+h0+'" placeholder="---" step="0.01" oninput="V[\'fluj_h0\']=this.value;updFlujDeltas();programarSyncNube()">'+
     '<span class="fu">m³</span></div></div></div>'+
     gl('Lecturas Bihorarias','H2,H4,H6,H8')+
     '<div class="hwrap"><table class="hgrid"><thead><tr><th class="rl">Dato</th><th>Un.</th>'+gHead(H4)+'</tr></thead><tbody>';
   // Fila de lecturas
   h+='<tr><td class="rl">Lectura</td><td class="uc">m³</td>';
   H4.forEach(function(hh){var k='fluj_h'+hh,v=V[k]||'';
-    h+='<td'+(hh===curH?' class="cur"':'')+'><input type="number" step="0.01" inputmode="decimal" class="hi" id="hgi-'+k+'" value="'+v+'" oninput="V[\''+k+'\']=this.value;updFlujDeltas();programarSyncNube()"></td>';
+    h+='<td'+(hh===curH?' class="cur"':'')+'><input type="number" step="0.01" class="hi" id="hgi-'+k+'" value="'+v+'" oninput="V[\''+k+'\']=this.value;updFlujDeltas();programarSyncNube()"></td>';
   });
   h+='</tr></tbody></table></div>';
   // Widget de deltas calculados
@@ -1025,7 +1031,7 @@ function renderDashboard(){
   var dbPairs=[[1,2],[3,4],[5,6],[7,8]];
   html+='<div class="db-sec"><div class="db-sec-hdr"><svg width="28" height="28" viewBox="0 0 28 28"><path d="M3 25L14 5L25 25Z" fill="#76C810"/><path d="M9 25L14 12L19 25Z" fill="#00493C"/><rect x="12" y="17" width="4" height="8" rx="2" fill="#CCF895"/></svg><span class="db-sec-title">Sección 3 · Precipitación (Merrill-Crowe)</span></div><div class="db-sec-body">';
   html+='<div style="background:var(--md);border-radius:10px;padding:12px;margin-bottom:4px"><div style="font-size:11px;color:var(--mlt);margin-bottom:8px;font-weight:700">CAUDAL POR CORTE (Q_H1+Q_H2 / etc.)</div><div style="display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:8px">';
-  H4.forEach(function(hh,idx){var q1=cmToM3h(V['s3_ton_h'+dbPairs[idx][0]]),q2=cmToM3h(V['s3_ton_h'+dbPairs[idx][1]]);var qs=(q1?+q1:0)+(q2?+q2:0);html+='<div style="background:rgba(255,255,255,0.1);border-radius:6px;padding:8px;text-align:center"><div style="font-size:10px;color:var(--mlt)">H'+hh+'</div><div style="font-size:14px;font-weight:700;color:var(--ml)">'+(q1||q2?qs.toFixed(1):'—')+'</div><div style="font-size:9px;color:rgba(255,255,255,0.5)">'+(q1||'—')+'+'+( q2||'—')+'</div></div>';});
+  H4.forEach(function(hh,idx){var q1=avgQ(dbPairs[idx][0]),q2=avgQ(dbPairs[idx][1]);var qs=(q1||0)+(q2||0);html+='<div style="background:rgba(255,255,255,0.1);border-radius:6px;padding:8px;text-align:center"><div style="font-size:10px;color:var(--mlt)">H'+hh+'</div><div style="font-size:14px;font-weight:700;color:var(--ml)">'+(q1||q2?qs.toFixed(1):'—')+'</div><div style="font-size:9px;color:rgba(255,255,255,0.5)">'+(q1?q1.toFixed(1):'—')+'+'+( q2?q2.toFixed(1):'—')+'</div></div>';});
   html+='</div></div>';
   html+='<div><div class="db-ct">Onzas Precipitadas Acumuladas por Corte (oz)</div><div class="db-cw sm"><canvas id="ch-oz"></canvas></div></div>';
   html+='<div><div class="db-ct">Ley de Soluciones por Corte (g/tm) — eje dual</div><div class="db-cw"><canvas id="ch-pregbarr"></canvas></div></div>';
@@ -1121,7 +1127,7 @@ function exportHTML(){
   body+='<div class="sec"><div class="sh">Sección 2 · Agitadores y Espesadores</div><div class="sb2"><div style="font-size:12px;font-weight:700;color:#00493C;padding:7px 12px;background:#EBF2E4;border-left:4px solid #76C810;margin-bottom:8px">% Sólidos Espesadores</div><div class="cw"><canvas id="ec-esp"></canvas></div>'+mkTbl('Agitador 0 · Parámetros Bihora (H2,H4,H6,H8)',[{key:'ag0_sol',lbl:'% Sólidos',unit:'%',fn:sAg6},{key:'ag0_m200',lbl:'% M200',unit:'%',fn:sAg0M200},{key:'ag0_afcn',lbl:'Aforación CN',unit:'s/L',fn:sFree},{key:'ag0_o2',lbl:'O2',unit:'ppm',fn:sAg0O2},{key:'ag0_ph',lbl:'pH',unit:'',fn:sAg0pH}],H4)+'<div style="font-size:12px;font-weight:700;color:#00493C;padding:7px 12px;background:#EBF2E4;border-left:4px solid #76C810;margin-bottom:8px">CN Libre Agitador 0 · H2,H4,H6,H8 (lb/tm)</div><div class="cw" style="height:130px"><canvas id="ec-ag0cn"></canvas></div>'+mkTbl('O2 Agitadores 1 y 2 (H2,H4,H6,H8)',[{key:'ag1_o2',lbl:'Agitador 1',unit:'ppm',fn:sAg0O2},{key:'ag2_o2',lbl:'Agitador 2',unit:'ppm',fn:sAg0O2}],H4)+mkTbl('Sedimentación Espesadores (H2,H4,H6,H8)',[{key:'esp1a_sed',lbl:'Esp. 1A',unit:'cm/s',fn:sFree},{key:'esp1b_sed',lbl:'Esp. 1B',unit:'cm/s',fn:sFree},{key:'esp3b_sed',lbl:'Esp. 3B',unit:'cm/s',fn:sFree}],H4)+mkTbl('Dosificación Reactivos (H1–H8)',[{key:'esp3b_pol',lbl:'Policloruro',unit:'ml/min',fn:sFree},{key:'s3_zinc',lbl:'Polvo de Zinc',unit:'g/min',fn:sFree},{key:'s3_cnlib',lbl:'CN Libre',unit:'lb/tm',fn:sFree},{key:'s3_cndos',lbl:'Dosis Cianuro',unit:'s/L',fn:sFree}],H8)+'</div></div>';
   body+='<div class="sec"><div class="sh">Sección 3 · Precipitación (Merrill-Crowe)</div><div class="sb2"><div style="display:flex;gap:10px;margin-bottom:16px;flex-wrap:wrap">';
   var expPairs=[[1,2],[3,4],[5,6],[7,8]];
-  H4.forEach(function(hh,idx){var q1=cmToM3h(V['s3_ton_h'+expPairs[idx][0]]),q2=cmToM3h(V['s3_ton_h'+expPairs[idx][1]]);var qs=(q1?+q1:0)+(q2?+q2:0);body+='<div style="background:#00493C;border-radius:8px;padding:10px 14px;min-width:100px"><div style="font-size:11px;color:#CCF895">H'+hh+'</div><div style="font-size:14px;font-weight:700;color:#76C810">'+(q1||q2?qs.toFixed(1):'—')+'</div><div style="font-size:10px;color:#A8C490">m³ corte</div></div>';});
+  H4.forEach(function(hh,idx){var q1=avgQ(expPairs[idx][0]),q2=avgQ(expPairs[idx][1]);var qs=(q1||0)+(q2||0);body+='<div style="background:#00493C;border-radius:8px;padding:10px 14px;min-width:100px"><div style="font-size:11px;color:#CCF895">H'+hh+'</div><div style="font-size:14px;font-weight:700;color:#76C810">'+(q1||q2?qs.toFixed(1):'—')+'</div><div style="font-size:10px;color:#A8C490">m³ corte</div></div>';});
   body+='</div><div style="font-size:12px;font-weight:700;color:#00493C;padding:7px 12px;background:#EBF2E4;border-left:4px solid #76C810;margin-bottom:8px">Onzas Precipitadas Acumuladas (oz)</div><div class="cw" style="height:140px"><canvas id="ec-oz"></canvas></div>';
   body+='<div style="font-size:12px;font-weight:700;color:#00493C;padding:7px 12px;background:#EBF2E4;border-left:4px solid #76C810;margin-bottom:4px">Ley Soluciones por Corte (g/tm) — Eje dual</div><div style="font-size:10px;color:#5A7E6A;padding:0 12px;margin-bottom:8px">Eje izq: Pregnant · Eje der: Barren (escalas independientes)</div><div class="cw"><canvas id="ec-pregbarr"></canvas></div>';
   body+='<div style="font-size:12px;font-weight:700;color:#00493C;padding:7px 12px;background:#EBF2E4;border-left:4px solid #76C810;margin-bottom:8px">Recuperación M-C por Corte (%)</div><div class="cw" style="height:140px"><canvas id="ec-recup"></canvas></div>';
